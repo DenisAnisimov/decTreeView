@@ -2,18 +2,6 @@
 
 { $DEFINE NATIVE_BORDERS}
 
-{$if CompilerVersion > 15}
-  {$DEFINE SUPPORTS_INLINE}
-{$ifend}
-
-{$if CompilerVersion >= 23}
-  {$DEFINE SUPPORTS_UNICODE_STRING}
-{$ifend}
-
-{$if CompilerVersion >= 24}
-  {$DEFINE SUPPORTS_ATOMICINCREMENT}
-{$ifend}
-
 (*
 
 Not supported yet:
@@ -98,6 +86,18 @@ ExtStyles:
 
 interface
 
+{$if CompilerVersion > 15}
+  {$DEFINE SUPPORTS_INLINE}
+{$ifend}
+
+{$if CompilerVersion >= 23}
+  {$DEFINE SUPPORTS_UNICODE_STRING}
+{$ifend}
+
+{$if CompilerVersion >= 24}
+  {$DEFINE SUPPORTS_ATOMICINCREMENT}
+{$ifend}
+
 uses
   Windows, CommCtrl;
 
@@ -112,7 +112,7 @@ const
 procedure InitTreeViewLib;
 
 const
-  TVS_EX_AUTOCENTER = $80000000;
+  TVS_EX_AUTOCENTER = $80000000; // Non standard
 
 const
   TVM_SETBORDER = TV_FIRST + 35;
@@ -131,6 +131,9 @@ function TreeView_GetYBorder(AWnd: HWND): UINT; {$IFDEF SUPPORTS_INLINE}inline;{
 function TreeView_SetSpace(AWnd: HWND; AFlags, AXSpace, AYSpace: UINT): Integer; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
 function TreeView_GetXSpace(AWnd: HWND): UINT; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
 function TreeView_GetYSpace(AWnd: HWND): UINT; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+
+const
+  TVN_GETITEMSIZE = TVN_FIRST - 100; // Non standard
 
 implementation
 
@@ -173,7 +176,6 @@ const
   WM_DPICHANGED_AFTERPARENT  = $02E3;
   WM_GETDPISCALEDSIZE        = $02E4;
 
-
   TVM_SETHOT = TV_FIRST + 58;
 {#define TreeView_SetHot(hwnd, hitem) \
     SNDMSG((hwnd), TVM_SETHOT, 0, (LPARAM)(hitem))}
@@ -214,7 +216,6 @@ const
   HGLPS_CLOSED           = 1;
   HGLPS_OPENED           = 2;
 
-
 var
   LibsCS: TRTLCriticalSection;
   LibsInited: Boolean;
@@ -225,6 +226,7 @@ type
   HTHEME = THandle;
 
   THEMESIZE = UINT;
+
 const
   TS_MIN = 0;
   TS_TRUE = 1;
@@ -485,6 +487,28 @@ begin
 end;
 
 const
+  GdiPlusDll = 'gdiplus.dll';
+
+function GdipCreateFromHDC(ADC: HDC; out AGraphics: Pointer): UInt32; stdcall; external GdiPlusDll;
+function GdipDeleteGraphics(AGraphics: Pointer): UInt32; stdcall; external GdiPlusDll;
+
+function GdipCreatePen1(AColor: UInt32; AWidth: Single; AUnit: UInt32; out APen: HPEN): UInt32; stdcall; external GdiPlusDll;
+function GdipDeletePen(APen: HPEN): UInt32; stdcall; external GdiPlusDll;
+
+const
+  SmoothingModeDefault      = 0;
+  SmoothingModeHighSpeed    = 1;
+  SmoothingModeHighQuality  = 2;
+  SmoothingModeNone         = 3;
+  SmoothingModeAntiAlias    = 4;
+  SmoothingModeAntiAlias8x4 = SmoothingModeAntiAlias;
+  SmoothingModeAntiAlias8x8 = 5;
+
+function GdipSetSmoothingMode(Graphics: Pointer; SmoothingMode: UInt32): UInt32; stdcall; external GdiPlusDll;
+
+function GdipDrawBeziersI(Graphics: Pointer; Pen: HPEN; const Points: PPoint; Count: Integer): UInt32; stdcall; external GdiPlusDll;
+
+const
   I_CHILDRENAUTO = -2;
 
   TVE_ACTIONMASK = $0003; // TVE_COLLAPSE | TVE_EXPAND | TVE_TOGGLE
@@ -697,6 +721,7 @@ type
     FSavePoint: TPoint;
     FPaintRequest: UINT;
     function SendDrawNotify(ADC: HDC; AStage: UINT; var ANMTVCustomDraw: TNMTVCustomDraw): UINT;
+    procedure PolyBezier(ADC: HDC; const APoints; ACount: DWORD; AColor: TColorRef);
     procedure PaintRootConnector(ADC: HDC; ASource, ADest: TTreeViewItem);
     procedure PaintRootConnectors(ADC: HDC; AUpdateRgn, ABackgroupRgn: HRGN; AEraseBackground: Boolean);
     procedure PaintInsertMask(ADC: HDC; AUpdateRgn: HRGN);
@@ -1034,7 +1059,7 @@ begin
     begin
       FState := (FState and not AItem.stateMask) or (AItem.state and AItem.stateMask);
 
-      if Selected <> PrevSelected then
+      {if Selected <> PrevSelected then
         if Selected then
           begin
             if not FTreeView.SelectItem(Self, False, TVC_UNKNOWN) then
@@ -1044,7 +1069,7 @@ begin
           begin
             if not FTreeView.SelectItem(nil, False, TVC_UNKNOWN) then
               FState := FState or TVIS_SELECTED;
-          end;
+          end;}
 
       if Expanded <> PrevExpanded then
         if Expanded then
@@ -1146,23 +1171,6 @@ begin
             CopyMemory(AItem.pszText, PAnsiChar(S), (Length(S) + 1) * SizeOf(AnsiChar));
         end;
     end;
-
-  {if (AItem.mask and TVIF_TEXT <> 0) and Assigned(AItem.pszText) and (AItem.cchTextMax > 0) then
-    begin
-      if AItem.cchTextMax = 1 then
-        AItem.pszText^ := #0
-      else
-        begin
-          S := AnsiString(Text);
-          if Length(S) >= AItem.cchTextMax then
-            SetLength(S, AItem.cchTextMax - 1);
-          if S = '' then
-            AItem.pszText^ := #0
-          else
-            CopyMemory(AItem.pszText, PAnsiChar(S), (Length(S) + 1) * SizeOf(AnsiChar));
-        end;
-    end;
-  DoAssignTo(PTVItemExW(AItem));}
 end;
 
 
@@ -1291,6 +1299,7 @@ var
   SaveFont: HFONT;
   ItemIndex: Integer;
   ButtonSize: TSize;
+  NMTVCustomDraw: TNMTVCustomDraw;
 begin
   if FNeedUpdateSize then
     begin
@@ -1335,6 +1344,19 @@ begin
       Inc(FWidth, FTreeView.HorzBorder * 2 + 2);
       Inc(FHeight, FTreeView.VertBorder * 2 + 2);
 
+      ZeroMemory(@NMTVCustomDraw, SizeOf(NMTVCustomDraw));
+      NMTVCustomDraw.nmcd.hdc := ADC;
+      NMTVCustomDraw.nmcd.rc.Right := FWidth;
+      NMTVCustomDraw.nmcd.rc.Bottom := FHeight;
+      NMTVCustomDraw.nmcd.dwItemSpec := DWORD_PTR(Self);
+      NMTVCustomDraw.nmcd.lItemlParam := FParam;
+      NMTVCustomDraw.iLevel := Level;
+      if FTreeView.SendNotify(TVN_GETITEMSIZE, @NMTVCustomDraw) <> 0 then
+        begin
+          FWidth := NMTVCustomDraw.nmcd.rc.Right;
+          FHeight := NMTVCustomDraw.nmcd.rc.Bottom;
+        end;
+
       FNeedUpdateSize := False;
     end;
 
@@ -1346,8 +1368,6 @@ end;
 procedure TTreeViewItem.PaintConnector(ADC: HDC; AIndex: Integer; ADest: TTreeViewItem);
 var
   Points: packed array[0..3] of TPoint;
-  Pen: HPEN;
-  SavePen: HPEN;
 begin
   Points[0].X := Right;
   Points[0].Y := Top + Round((Height / (Count + 1)) * (AIndex + 1));
@@ -1357,12 +1377,7 @@ begin
   Points[3].Y := ADest.Top + Round(ADest.Height / 2);
   Points[2].X := Points[3].X - TreeView.HorzSpace div 2;
   Points[2].Y := Points[3].Y;
-
-  Pen := CreatePen(PS_SOLID, 1, TreeView.LineColor);
-  SavePen := SelectObject(ADC, Pen);
-  PolyBezier(ADC, Points, 4);
-  SelectObject(ADC, SavePen);
-  DeleteObject(Pen);
+  FTreeView.PolyBezier(ADC, Points, 4, TreeView.LineColor);
 end;
 
 procedure FillRectWithColor(ADC: HDC; const ARect: TRect; AColor: TColorRef);
@@ -1936,27 +1951,30 @@ var
 begin
   Result := nil;
   Pos := 0; // Make compiler happy
-  case THandle(AInsertAfter) of
-    THandle(TVI_FIRST):
-      Pos := 0;
-    THandle(TVI_LAST):
-      Pos := Count;
-    THandle(TVI_SORT):
-      Pos := Count;
-    THandle(TVI_ROOT):
-      Exit;
+  if AInsertAfter = TTreeViewItem(TVI_FIRST) then
+    Pos := 0
   else
-    PosFound := False;
-    for ItemIndex := 0 to Count - 1 do
-      if Items[ItemIndex] = AInsertAfter then
-        begin
-          Pos := ItemIndex;
-          PosFound := True;
-          Break;
-        end;
-    if not PosFound then
-      Exit;
-  end;
+    if AInsertAfter = TTreeViewItem(TVI_LAST) then
+      Pos := Count
+    else
+      if AInsertAfter = TTreeViewItem(TVI_SORT) then
+        Pos := Count
+      else
+        if AInsertAfter = TTreeViewItem(TVI_ROOT) then
+          Exit
+        else
+          begin
+            PosFound := False;
+            for ItemIndex := 0 to Count - 1 do
+              if Items[ItemIndex] = AInsertAfter then
+                begin
+                  Pos := ItemIndex;
+                  PosFound := True;
+                  Break;
+                end;
+            if not PosFound then
+              Exit;
+          end;
 
   if Count = Length(Items) then
     begin
@@ -2449,11 +2467,40 @@ begin
   SetWindowOrgEx(ADC, Point.X, Point.Y, nil);
 end;
 
+procedure TTreeView.PolyBezier(ADC: HDC; const APoints; ACount: DWORD; AColor: TColorRef);
+var
+  GdiPlusOk: Boolean;
+  NativeHandle: Pointer;
+  Pen: HPEN;
+  SavePen: HPEN;
+begin
+  if ACount = 0 then Exit;
+
+  GdiPlusOk := False;
+  if GdipCreateFromHDC(ADC, NativeHandle) = 0 then
+    begin
+      if GdipCreatePen1(AColor or $FF000000, 1, 0, Pen) = 0 then
+        begin
+          if GdipSetSmoothingMode(NativeHandle, SmoothingModeHighQuality) = 0 then
+            GdiPlusOk := GdipDrawBeziersI(NativeHandle, Pen, @APoints, ACount) = 0;
+          GdipDeletePen(Pen);
+        end;
+      GdipDeleteGraphics(NativeHandle);
+    end;
+
+  if not GdiPlusOk then
+    begin
+      Pen := CreatePen(PS_SOLID, 1, AColor);
+      SavePen := SelectObject(ADC, Pen);
+      Windows.PolyBezier(ADC, APoints, 4);
+      SelectObject(ADC, SavePen);
+      DeleteObject(Pen);
+    end;
+end;
+
 procedure TTreeView.PaintRootConnector(ADC: HDC; ASource, ADest: TTreeViewItem);
 var
   Points: packed array[0..3] of TPoint;
-  Pen: HPEN;
-  SavePen: HPEN;
 begin
   Points[0].X := HorzSpace div 2;
   Points[0].Y := ASource.Top + ASource.Height div 2;
@@ -2463,12 +2510,7 @@ begin
   Points[3].Y := ADest.Top + ADest.Height div 2;
   Points[2].X := Points[3].X - HorzSpace div 2;
   Points[2].Y := Points[3].Y;
-
-  Pen := CreatePen(PS_SOLID, 1, LineColor);
-  SavePen := SelectObject(ADC, Pen);
-  PolyBezier(ADC, Points, 4);
-  SelectObject(ADC, SavePen);
-  DeleteObject(Pen);
+  PolyBezier(ADC, Points, 4, LineColor);
 end;
 
 procedure TTreeView.PaintRootConnectors(ADC: HDC; AUpdateRgn, ABackgroupRgn: HRGN; AEraseBackground: Boolean);
@@ -4100,9 +4142,10 @@ begin
     FullUpdate
   else
     if NeedUpdate then
-      Update;
-  if NeedInvalidate then
-    Invalidate;
+      Update
+    else
+      if NeedInvalidate then
+        Invalidate;
 end;
 
 procedure TTreeView.SetStyle2(AMask, AStyle2: UINT);
@@ -4128,9 +4171,10 @@ begin
     FullUpdate
   else
     if NeedUpdate then
-      Update;
-  if NeedInvalidate then
-    Invalidate;
+      Update
+    else
+      if NeedInvalidate then
+        Invalidate;
 end;
 
 procedure TTreeView.SetStyleEx(AStyleEx: UINT);
@@ -4149,9 +4193,10 @@ begin
     FullUpdate
   else
     if NeedUpdate then
-      Update;
-  if NeedInvalidate then
-    Invalidate;
+      Update
+    else
+      if NeedInvalidate then
+        Invalidate;
 end;
 
 procedure TTreeView.SetDpi(ADpi: UINT);

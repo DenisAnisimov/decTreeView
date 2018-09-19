@@ -1,11 +1,15 @@
 unit decTreeView;
 
+{$DEFINE ENABLE_GDIPLUS}
+
 interface
 
 uses
-  Windows, Messages, Classes, Controls, ComCtrls, Forms;
+  Windows, Messages, CommCtrl, Classes, Controls, ComCtrls, Forms {$IFDEF ENABLE_GDIPLUS}, GDIPlus{$ENDIF};
 
 type
+  TOnGetItemSize = procedure(ASender: TCustomTreeView; AItem: TTreeNode; var AWidth, AHeight: Integer) of object;
+
   TdecTreeView = class(TTreeView)
   public
     constructor Create(AOwner: TComponent); override;
@@ -13,20 +17,23 @@ type
     procedure CreateParams(var AParams: TCreateParams); override;
     procedure CreateWnd; override;
     procedure WMERASEBKGND(var AMessage: TMessage); message WM_ERASEBKGND;
+    procedure CNNotify(var AMessage: TWMNotifyTV); message CN_NOTIFY;
   private
     FAlternativeView: Boolean;
     FAutoCenter: Boolean;
+    FOnGetItemSize: TOnGetItemSize;
     procedure SetAlternativeView(AAlternativeView: Boolean);
     procedure SetAutoCenter(AAutoCenter: Boolean);
   published
     property AlternativeView: Boolean read FAlternativeView write SetAlternativeView default True;
     property AutoCenter: Boolean read FAutoCenter write SetAutoCenter default True;
+    property OnGetItemSize: TOnGetItemSize read FOnGetItemSize write FOnGetItemSize;
   end;
 
 implementation
 
 uses
-  decTreeViewLib, CommCtrl;
+  decTreeViewLib;
 
 constructor TdecTreeView.Create(AOwner: TComponent);
 begin
@@ -101,6 +108,30 @@ procedure TdecTreeView.WMERASEBKGND(var AMessage: TMessage);
 begin
   if AlternativeView then
     AMessage.Result := 1
+  else
+    inherited;
+end;
+
+procedure TdecTreeView.CNNotify(var AMessage: TWMNotifyTV);
+var
+  Item: TTreeNode;
+  ItemWidth, ItemHeight: Integer;
+begin
+  if AMessage.NMHdr.code = TVN_GETITEMSIZE then
+    begin
+      if Assigned(FOnGetItemSize) then
+        begin
+          Item := TTreeNode(AMessage.NMTVCustomDraw.nmcd.lItemlParam);
+          ItemWidth := AMessage.NMTVCustomDraw.nmcd.rc.Right;
+          ItemHeight := AMessage.NMTVCustomDraw.nmcd.rc.Bottom;
+          FOnGetItemSize(Self, Item, ItemWidth, ItemHeight);
+          AMessage.NMTVCustomDraw.nmcd.rc.Right := ItemWidth;
+          AMessage.NMTVCustomDraw.nmcd.rc.Bottom := ItemHeight;
+          AMessage.Result := 1;
+        end
+      else
+        AMessage.Result := 0;
+    end
   else
     inherited;
 end;
