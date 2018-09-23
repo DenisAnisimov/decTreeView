@@ -1,6 +1,6 @@
 ﻿unit decTreeViewLib;
 
-{ $DEFINE NATIVE_BORDERS}
+{$DEFINE NATIVE_BORDERS}
 
 (*
 
@@ -67,12 +67,10 @@ Styles:
   TVS_NOTOOLTIPS
   TVS_RTLREADING
   TVS_SINGLEEXPAND
-  TVS_TRACKSELECT
 
 ExtStyles:
   TVS_EX_AUTOHSCROLL
   TVS_EX_DIMMEDCHECKBOXES
-  TVS_EX_DOUBLEBUFFER
   TVS_EX_DRAWIMAGEASYNC
   TVS_EX_EXCLUSIONCHECKBOXES
   TVS_EX_FADEINOUTEXPANDOS
@@ -105,6 +103,8 @@ uses
 type
   UnicodeString = WideString;
 {$endif}
+
+{$MINENUMSIZE 4}
 
 const
   TreeViewClassName: PChar = 'decTreeView';
@@ -194,6 +194,19 @@ begin
            else Result := B;
 end;
 
+var
+  OSVersionInfo: TOSVersionInfo;
+
+procedure InitOSVersion;
+begin
+  OSVersionInfo.dwOSVersionInfoSize := SizeOf(OSVersionInfo);
+  if not GetVersionEx(OSVersionInfo) then
+    begin
+      OSVersionInfo.dwMajorVersion := 5;
+      OSVersionInfo.dwMinorVersion := 1;
+    end;
+end;
+
 const
   VSCLASS_TREEVIEWSTYLE   = 'TREEVIEWSTYLE';
   VSCLASS_TREEVIEW        = 'TREEVIEW';
@@ -220,6 +233,7 @@ var
   LibsCS: TRTLCriticalSection;
   LibsInited: Boolean;
   UXThemeLib: HMODULE;
+  DWMApiLib: HMODULE;
   User32Lib: HMODULE;
 
 type
@@ -247,15 +261,74 @@ const
 type
   TCloseThemeData = function(ATheme: HTHEME): HRESULT; stdcall;
   TDrawThemeBackground = function(ATheme: HTHEME; ADC: HDC; APartId, AStateId: Integer; const ABoundingRect: TRect; AClipRect: PRect): HRESULT; stdcall;
+  TDrawThemeParentBackground = function(AWnd: HWND; ADC: HDC; ARect: PRECT): HRESULT; stdcall;
   TGetThemeBackgroundContentRect = function(ATheme: HTHEME; ADC: HDC; APartId, AStateId: Integer; const ABoundingRect: TRect; AContentRect: PRECT): HRESULT; stdcall;
   TGetThemeColor = function(ATheme: HTHEME; APartId, AStateId, APropId: Integer; var AColor: COLORREF): HRESULT; stdcall;
   TGetThemePartSize = function(ATheme: HTHEME; ADC: HDC; APartId, AStateId: Integer; ARect: PRECT; ASize: THEMESIZE; var psz: TSize): HRESULT; stdcall;
   TIsAppThemed = function: BOOL; stdcall;
   TIsThemeActive = function: BOOL; stdcall;
+  TIsThemeBackgroundPartiallyTransparent = function(ATheme: HTHEME; APartId, AStateId: Integer): BOOL; stdcall;
   TIsThemePartDefined = function(ATheme: HTHEME; APartId, AStateId: Integer): BOOL; stdcall;
   TOpenThemeData = function(AWnd: HWND; AClassList: LPCWSTR): HTHEME; stdcall;
   TOpenThemeDataEx = function(AWnd: HWND; AClassList: PWideChar; AFlags: DWORD): HTHEME; stdcall;
   TOpenThemeDataForDpi = function(AWnd: HWND; AClassList: PWideChar; ADPI: UINT): HTHEME; stdcall;
+
+  HPAINTBUFFER = THandle;
+
+  TBPPaintParams = record
+    cbSize: DWORD;
+    dwFlags: DWORD;                      // BPPF_ flags
+    prcExclude: PRect;
+    pBlendFunction: PBLENDFUNCTION;
+  end;
+  PBPPaintParams = ^TBPPaintParams;
+
+const
+  // BP_BUFFERFORMAT
+  BPBF_COMPATIBLEBITMAP = 0; // Compatible bitmap
+  BPBF_DIB              = 1; // Device-independent bitmap
+  BPBF_TOPDOWNDIB       = 2; // Top-down device-independent bitmap
+  BPBF_TOPDOWNMONODIB   = 3; // Top-down monochrome device-independent bitmap
+  BPBF_COMPOSITED       = BPBF_TOPDOWNDIB;
+
+type
+  TBufferedPaintInit = function: HRESULT; stdcall;
+  TBufferedPaintUnInit = function: HRESULT; stdcall;
+  TBeginBufferedPaint = function(ATargetDC: HDC; const ATargetRect: TRect; AFormat: DWORD; APaintParams: PBPPaintParams; var ADC: HDC): HPAINTBUFFER; stdcall;
+  TBufferedPaintSetAlpha = function(ABufferedPaint: HPAINTBUFFER; ARect: PRect; AAlpha: Byte): HRESULT; stdcall;
+  TEndBufferedPaint = function(ABufferedPaint: HPAINTBUFFER; AUpdateTarget: BOOL): HRESULT; stdcall;
+
+const
+  TMT_TRANSITIONDURATIONS = 6000;
+
+type
+  TGetThemeTransitionDuration = function(ATheme: HTHEME; APartId, AStateIdFrom, AStateIdTo, APropId: Integer; var ADuration: DWORD): HRESULT; stdcall;
+
+const
+  // BP_ANIMATIONSTYLE
+  BPAS_NONE   = 0; // No animation
+  BPAS_LINEAR = 1; // Linear fade animation
+  BPAS_CUBIC  = 2; // Cubic fade animation
+  BPAS_SINE   = 3; // Sinusoid fade animation
+
+type
+  TBPAnimationParams = record
+    cbSize: DWORD;
+    dwFlags: DWORD;              // BPAF_ flags
+    style: Cardinal;
+    dwDuration: DWORD;
+  end;
+  PBPAnimationParams = ^TBPAnimationParams;
+
+  HANIMATIONBUFFER = THandle;     // handle to a buffered paint animation
+
+  TBeginBufferedAnimation = function (AWnd: HWND; ATargetDC: HDC; var ATargetRect: TRect; AFormat: DWORD; APaintParams: PBPPaintParams;
+    var AAnimationParams: TBPAnimationParams; var AFromDC: HDC; var AToDC: HDC): HANIMATIONBUFFER; stdcall;
+  TBufferedPaintRenderAnimation = function (AWND: HWND; ATarget: HDC): BOOL; stdcall;
+  TEndBufferedAnimation = function(AAnimation: HANIMATIONBUFFER; AUpdateTarget: BOOL): HRESULT; stdcall;
+  TBufferedPaintStopAllAnimations = function(AWnd: HWND): HRESULT; stdcall;
+
+  TDwmIsCompositionEnabled = function(var AEnabled: BOOL): HRESULT; stdcall;
 
   TGetDpiForWindow = function(AWnd: HWND): UINT; stdcall;
   TGetDpiForSystem = function: UINT; stdcall;
@@ -265,15 +338,31 @@ type
 var
   _CloseThemeData: TCloseThemeData;
   _DrawThemeBackground: TDrawThemeBackground;
+  _DrawThemeParentBackground: TDrawThemeParentBackground;
   _GetThemeBackgroundContentRect: TGetThemeBackgroundContentRect;
   _GetThemeColor: TGetThemeColor;
   _GetThemePartSize: TGetThemePartSize;
   _IsAppThemed: TIsAppThemed;
   _IsThemeActive: TIsThemeActive;
+  _IsThemeBackgroundPartiallyTransparent: TIsThemeBackgroundPartiallyTransparent;
   _IsThemePartDefined: TIsThemePartDefined;
   _OpenThemeData: TOpenThemeData;
   _OpenThemeDataForDpi: TOpenThemeDataForDpi;
   _OpenThemeDataEx: TOpenThemeDataEx;
+
+  _BufferedPaintInit: TBufferedPaintInit;
+  _BufferedPaintUnInit: TBufferedPaintUnInit;
+  _BeginBufferedPaint: TBeginBufferedPaint;
+  _BufferedPaintSetAlpha: TBufferedPaintSetAlpha;
+  _EndBufferedPaint: TEndBufferedPaint;
+
+  _GetThemeTransitionDuration: TGetThemeTransitionDuration;
+  _BeginBufferedAnimation: TBeginBufferedAnimation;
+  _BufferedPaintRenderAnimation: TBufferedPaintRenderAnimation;
+  _EndBufferedAnimation: TEndBufferedAnimation;
+  _BufferedPaintStopAllAnimations: TBufferedPaintStopAllAnimations;
+
+  _DwmIsCompositionEnabled: TDwmIsCompositionEnabled;
 
   _GetDpiForWindow: TGetDpiForWindow;
   _GetDpiForSystem: TGetDpiForSystem;
@@ -292,18 +381,38 @@ begin
         begin
           _CloseThemeData := GetProcAddress(UXThemeLib, 'CloseThemeData');
           _DrawThemeBackground := GetProcAddress(UXThemeLib, 'DrawThemeBackground');
+          _DrawThemeParentBackground := GetProcAddress(UXThemeLib, 'DrawThemeParentBackground');
           _GetThemeBackgroundContentRect := GetProcAddress(UXThemeLib, 'GetThemeBackgroundContentRect');
           _GetThemeColor := GetProcAddress(UXThemeLib, 'GetThemeColor');
           _GetThemePartSize := GetProcAddress(UXThemeLib, 'GetThemePartSize');
           _IsAppThemed := GetProcAddress(UXThemeLib, 'IsAppThemed');
           _IsThemeActive := GetProcAddress(UXThemeLib, 'IsThemeActive');
+          _IsThemeBackgroundPartiallyTransparent := GetProcAddress(UXThemeLib, 'IsThemeBackgroundPartiallyTransparent');
           _IsThemePartDefined := GetProcAddress(UXThemeLib, 'IsThemePartDefined');
           _OpenThemeData := GetProcAddress(UXThemeLib, 'OpenThemeData');
           _OpenThemeDataForDpi := GetProcAddress(UXThemeLib, 'OpenThemeDataForDpi');
           _OpenThemeDataEx := GetProcAddress(UXThemeLib, 'OpenThemeDataEx');
+
+          _BufferedPaintInit := GetProcAddress(UXThemeLib, 'BufferedPaintInit');
+          _BufferedPaintUnInit := GetProcAddress(UXThemeLib, 'BufferedPaintUnInit');
+          _BeginBufferedPaint := GetProcAddress(UXThemeLib, 'BeginBufferedPaint');
+          _BufferedPaintSetAlpha := GetProcAddress(UXThemeLib, 'BufferedPaintSetAlpha');
+          _EndBufferedPaint := GetProcAddress(UXThemeLib, 'EndBufferedPaint');
+
+          _GetThemeTransitionDuration := GetProcAddress(UXThemeLib, 'GetThemeTransitionDuration');
+          _BeginBufferedAnimation := GetProcAddress(UXThemeLib, 'BeginBufferedAnimation');
+          _BufferedPaintRenderAnimation := GetProcAddress(UXThemeLib, 'BufferedPaintRenderAnimation');
+          _EndBufferedAnimation := GetProcAddress(UXThemeLib, 'EndBufferedAnimation');
+          _BufferedPaintStopAllAnimations := GetProcAddress(UXThemeLib, 'BufferedPaintStopAllAnimations');
         end;
 
-      User32Lib := LoadLibrary('User32.dll');
+      DWMApiLib := LoadLibrary('dwmapi.dll');
+      if DWMApiLib <> 0 then
+        begin
+          _DwmIsCompositionEnabled := GetProcAddress(DWMApiLib, 'DwmIsCompositionEnabled');
+        end;
+
+      User32Lib := LoadLibrary('user32.dll');
       if User32Lib <> 0 then
         begin
           @_GetDpiForWindow := GetProcAddress(User32Lib, 'GetDpiForWindow');
@@ -319,6 +428,8 @@ procedure DoneLibs;
 begin
   if UXThemeLib <> 0 then
     FreeLibrary(UXThemeLib);
+  if DWMApiLib <> 0 then
+    FreeLibrary(DWMApiLib);
   if User32Lib <> 0 then
     FreeLibrary(User32Lib);
 end;
@@ -335,6 +446,14 @@ function DrawThemeBackground(ATheme: HTHEME; ADC: HDC; APartId, AStateId: Intege
 begin
   if Assigned(_DrawThemeBackground) then
     Result := _DrawThemeBackground(ATheme, ADC, APartId, AStateId, ARect, AClipRect)
+  else
+    Result := E_NOTIMPL;
+end;
+
+function DrawThemeParentBackground(AWnd: HWND; ADC: HDC; ARect: PRECT): HRESULT;
+begin
+  if Assigned(_DrawThemeParentBackground) then
+    Result := _DrawThemeParentBackground(AWnd, ADC, ARect)
   else
     Result := E_NOTIMPL;
 end;
@@ -379,6 +498,14 @@ begin
     Result := False;
 end;
 
+function IsThemeBackgroundPartiallyTransparent(ATheme: HTHEME; APartId, AStateId: Integer): BOOL;
+begin
+  if Assigned(_IsThemeBackgroundPartiallyTransparent) then
+    Result := _IsThemeBackgroundPartiallyTransparent(ATheme, APartId, AStateId)
+  else
+    Result := False;
+end;
+
 function IsThemePartDefined(ATheme: HTHEME; APartId, AStateId: Integer): Boolean;
 begin
   if Assigned(_IsThemePartDefined) then
@@ -418,6 +545,99 @@ function UseThemes: Boolean;
 begin
   if (UXThemeLib <> 0) then
     Result := IsAppThemed and IsThemeActive
+  else
+    Result := False;
+end;
+
+function BufferedPaintInit: HRESULT;
+begin
+  if Assigned(_BufferedPaintInit) then
+    Result := _BufferedPaintInit
+  else
+    Result := E_NOTIMPL;
+end;
+
+function BufferedPaintUnInit: HRESULT;
+begin
+  if Assigned(_BufferedPaintUnInit) then
+    Result := _BufferedPaintUnInit
+  else
+    Result := E_NOTIMPL;
+end;
+
+function BeginBufferedPaint(ATargetDC: HDC; const ATargetRect: TRect; AFormat: DWORD; APaintParams: PBPPaintParams; var ADC: HDC): HPAINTBUFFER;
+begin
+  if Assigned(_BeginBufferedPaint) then
+    Result := _BeginBufferedPaint(ATargetDC, ATargetRect, AFormat, APaintParams, ADC)
+  else
+    Result := 0;
+end;
+
+function BufferedPaintSetAlpha(ABufferedPaint: HPAINTBUFFER; ARect: PRect; AAlpha: Byte): HRESULT;
+begin
+  if Assigned(_BufferedPaintSetAlpha) then
+    Result := _BufferedPaintSetAlpha(ABufferedPaint, ARect, AAlpha)
+  else
+    Result := E_NOTIMPL;
+end;
+
+function EndBufferedPaint(ABufferedPaint: HPAINTBUFFER; AUpdateTarget: BOOL): HRESULT;
+begin
+  if Assigned(_EndBufferedPaint) then
+    Result := _EndBufferedPaint(ABufferedPaint, AUpdateTarget)
+  else
+    Result := E_NOTIMPL;
+end;
+
+function GetThemeTransitionDuration(ATheme: HTHEME; APartId, AStateIdFrom, AStateIdTo, APropId: Integer; var ADuration: DWORD): HRESULT;
+begin
+  if Assigned(_GetThemeTransitionDuration) then
+    Result := _GetThemeTransitionDuration(ATheme, APartId, AStateIdFrom, AStateIdTo, APropId, ADuration)
+  else
+    Result := E_NOTIMPL;
+end;
+
+function BeginBufferedAnimation(AWnd: HWND; ATargetDC: HDC; var ATargetRect: TRect; AFormat: DWORD; APaintParams: PBPPaintParams;
+  var AAnimationParams: TBPAnimationParams; var AFromDC: HDC; var AToDC: HDC): HANIMATIONBUFFER;
+begin
+  if Assigned(_BeginBufferedAnimation) then
+    Result := _BeginBufferedAnimation(AWnd, ATargetDC, ATargetRect, AFormat, APaintParams, AAnimationParams, AFromDC, AToDC)
+  else
+    Result := 0;
+end;
+
+function BufferedPaintRenderAnimation(AWND: HWND; ATarget: HDC): BOOL;
+begin
+  if Assigned(_BufferedPaintRenderAnimation) then
+    Result := _BufferedPaintRenderAnimation(AWnd, ATarget)
+  else
+    Result := False;
+end;
+
+function EndBufferedAnimation(AAnimation: HANIMATIONBUFFER; AUpdateTarget: BOOL): HRESULT;
+begin
+  if Assigned(_EndBufferedAnimation) then
+    Result := _EndBufferedAnimation(AAnimation, AUpdateTarget)
+  else
+    Result := E_NOTIMPL;
+end;
+
+function BufferedPaintStopAllAnimations(AWnd: HWND): HRESULT;
+begin
+  if Assigned(_BufferedPaintStopAllAnimations) then
+    Result := _BufferedPaintStopAllAnimations(AWnd)
+  else
+    Result := E_NOTIMPL;
+end;
+
+
+function DwmIsCompositionEnabled: BOOL;
+begin
+  if Assigned(_DwmIsCompositionEnabled) then
+    begin
+      if _DwmIsCompositionEnabled(Result) <> S_OK then
+        Result := False
+    end
   else
     Result := False;
 end;
@@ -549,6 +769,9 @@ begin
 end;
 
 type
+  TKids = (kCompute, kForceYes, kForceNo, kCallback);
+
+type
   TTreeView = class;
 
   TTreeViewItems = class;
@@ -572,6 +795,8 @@ type
     function Expand(ACode, AAction: UINT; ANotify: Boolean): Boolean;
     procedure FullExpand(ACode, AAction: UINT; ANotify: Boolean);
     function ExpandParents(AAction: UINT): Boolean;
+    procedure PreparePosition1;
+    procedure PreparePosition2;
     procedure UpdateSize(ADC: HDC);
     procedure PaintConnector(ADC: HDC; AIndex: Integer; ADest: TTreeViewItem);
     procedure PaintConnectors(ADC: HDC; AUpdateRgn, ABackgroupRgn: HRGN; AEraseBackground: Boolean);
@@ -581,6 +806,8 @@ type
     procedure PaintText(ADC: HDC; var ARect: TRect; AFontColor: TColorRef);
     procedure PaintButton(ADC: HDC; const ARect: TRect);
     procedure Paint(ADC: HDC; AUpdateRgn, ABackgroupRgn: HRGN; AXOffset, AYOffset: Integer; AEraseBackground: Boolean);
+    procedure MouseMove(const APoint: TPoint);
+    procedure MouseLeave;
   private
     FTreeView: TTreeView;
     FParentItems: TTreeViewItems;
@@ -598,6 +825,10 @@ type
     FParam: LPARAM;
     FIntegral: Integer;
 
+    FKids: TKids;
+
+    FPrevLeft: Integer;
+    FPrevTop: Integer;
     FLeft: Integer;
     FTop: Integer;
     FWidth: Integer;
@@ -606,6 +837,8 @@ type
     FTextHeight: Integer;
 
     FItems: TTreeViewItems;
+
+    FHotButton: Boolean;
 
     function HasStateIcon: Boolean;
     function HasIcon: Boolean;
@@ -622,6 +855,10 @@ type
     function GetSelectedImageIndex: Integer;
     function GetExpandedImageIndex: Integer;
 
+    property Kids: TKids read FKids;
+
+    function GetLeft: Integer;
+    function GetTop: Integer;
     function GetRight: Integer;
     function GetBottom: Integer;
     function GetBoundsRect: TRect;
@@ -634,6 +871,8 @@ type
     function GetItems: TTreeViewItems;
     function GetCount: Integer;
     function GetItem(AIndex: Integer): TTreeViewItem;
+
+    procedure SetHotButton(AHotButton: Boolean);
   private
     property TreeView: TTreeView read FTreeView;
     property ParentItems: TTreeViewItems read FParentItems;
@@ -652,8 +891,8 @@ type
     property SelectedImageIndex: Integer read GetSelectedImageIndex;
     property ExpandedImageIndex: Integer read GetExpandedImageIndex;
 
-    property Left: Integer read FLeft write FLeft;
-    property Top: Integer read FTop write FTop;
+    property Left: Integer read GetLeft write FLeft;
+    property Top: Integer read GetTop write FTop;
     property Right: Integer read GetRight;
     property Bottom: Integer read GetBottom;
     property Width: Integer read FWidth write FWidth;
@@ -668,6 +907,8 @@ type
     property Items_: TTreeViewItems read GetItems;
     property Count: Integer read GetCount;
     property Items[AIndex: Integer]: TTreeViewItem read GetItem;
+
+    property HotButton: Boolean read FHotButton write SetHotButton;
   end;
   PTreeViewItem = ^TTreeViewItem;
 
@@ -694,23 +935,31 @@ type
     property Level: Integer read FLevel;
   end;
 
+  TAnimationMode = (amNone, amExpand, amCollapse);
+
   TTreeView = class(TObject)
   public
     constructor Create;
     destructor Destroy; override;
   private
+    // NC Paint
+    function HasBorder: Boolean;
     {$IFDEF NATIVE_BORDERS}
     procedure CaclClientRect(ARect, AClientRect: PRect);
-    procedure PaintClientRect(ARgn: HRGN);
     {$ENDIF}
+    function PaintClientRect(AClipRgn: HRGN): LRESULT;
   private
     // Scroll routines
     FUpdateScrollBars: Boolean;
+    FPrevOptimalWidth: Integer;
+    FPrevOptimalHeight: Integer;
     FOptimalWidth: Integer;
     FOptimalHeight: Integer;
+    function PixelsPerLine: UINT;
     function IsScrollBarVisible(ABar: DWORD): Boolean;
     function IsHorzScrollBarVisible: Boolean;
     function IsVertScrollBarVisible: Boolean;
+    procedure UpdateScrollBarsEx(AClientWidth, AClientHeight: Integer);
     procedure UpdateScrollBars;
     procedure ScrollMessage(AReason: WPARAM; ABar: DWORD);
     procedure CalcBaseOffsets(var AXOffset, AYOffset: Integer);
@@ -718,8 +967,18 @@ type
     procedure OffsetItemRect(var ARect: TRect);
   private
     // Paint routines
+    FBufferedPaintInited: Boolean;
+    FBufferedPaintInitResult: HRESULT;
+    FHideFocus: Boolean;
     FSavePoint: TPoint;
     FPaintRequest: UINT;
+    FPrevXOffset: Integer;
+    FPrevYOffset: Integer;
+    FResizeMode: Boolean;
+    FAnimationMode: TAnimationMode;
+    FAnimatioStepCount: Integer;
+    FAnimatioStep: Integer;
+    FAnimationItem: TTreeViewItem;
     function SendDrawNotify(ADC: HDC; AStage: UINT; var ANMTVCustomDraw: TNMTVCustomDraw): UINT;
     procedure PolyBezier(ADC: HDC; const APoints; ACount: DWORD; AColor: TColorRef);
     procedure PaintRootConnector(ADC: HDC; ASource, ADest: TTreeViewItem);
@@ -730,16 +989,22 @@ type
     procedure PaintClient(ADC: HDC);
     procedure Invalidate;
     procedure InvalidateItem(AItem: TTreeViewItem);
+    procedure InvalidateItemButton(AItem: TTreeViewItem);
     procedure InvalidateInsertMask;
+    function CalcAnimation(AStart, AFinish: Integer): Integer;
+    procedure DoAnimation(AItem: TTreeViewItem; AMode: TAnimationMode; AMouse: Boolean);
+    property AnimationMode: TAnimationMode read FAnimationMode;
+    property AnimationItem: TTreeViewItem read FAnimationItem;
   private
     // Item routines
     FInsertMaskItem: TTreeViewItem;
     FInsertMaskItemAfter: Boolean;
-    FSelectedItem: TTreeViewItem;
+    FFocusedItem: TTreeViewItem;
     FMouseOverItem: TTreeViewItem;
     FExpandItem: TTreeViewItem;
     ExpandItemRect: TRect;
     FScrollItem: TTreeViewItem;
+    FHotItem: TTreeViewItem;
     procedure HitTest(TVHitTestInfo: PTVHitTestInfo);
     procedure MakeVisible(AItem: TTreeViewItem);
     function SelectItem(AItem: TTreeViewItem; ANotify: Boolean; AAction: UINT): Boolean;
@@ -747,30 +1012,41 @@ type
     procedure SetInsertMaskItemAfter(AInsertMaskItem: TTreeViewItem; AAfter: Boolean);
     procedure SetInsertMaskItem(AInsertMaskItem: TTreeViewItem);
     function GetInsertMaskRect: TRect;
+    procedure SetHotItem(AHotItem: TTreeViewItem);
     property InsertMaskItem: TTreeViewItem read FInsertMaskItem write SetInsertMaskItem;
     property InsertMaskItemAfter: Boolean read FInsertMaskItemAfter;
     property InsertMaskRect: TRect read GetInsertMaskRect;
-    property SelectedItem: TTreeViewItem read FSelectedItem;
+    property FocusedItem: TTreeViewItem read FFocusedItem;
     property MouseOverItem: TTreeViewItem read FMouseOverItem write FMouseOverItem;
     property ExpandItem: TTreeViewItem read FExpandItem write FExpandItem;
     property ScrollItem: TTreeViewItem read FScrollItem write FScrollItem;
+    property HotItem: TTreeViewItem read FHotItem write SetHotItem;
   private
     // Control routines
     FMoveMode: Boolean;
     FMoveMouseStartPos: TPoint;
     FMoveScrollStartPos: TPoint;
+    FTrackMouse: Boolean;
+    FWheelAccumulator: array[Boolean] of Integer;
+    FWheelActivity: array[Boolean] of Cardinal;
+    function GetClientCursorPos: TPoint;
     procedure KeyDown(AKeyCode: DWORD; AFlags: DWORD);
     procedure LButtonDown(APoint: TPoint);
     procedure LButtonUp(APoint: TPoint);
     procedure MButtonDown(APoint: TPoint);
     procedure RButtonDown(APoint: TPoint);
+    procedure TrackMouse;
     procedure MouseMove(APoint: TPoint);
+    procedure MouseHover(APoint: TPoint);
+    procedure MouseLeave;
+    procedure MouseWheel(ADelta: Integer; AVert: Boolean);
   private
     // Callback routines
     function SendNotify(AParentWnd, AWnd: HWND; ACode: Integer; ANMHdr: PNMHdr): LRESULT; overload;
     function SendNotify(ACode: Integer; ANMHdr: PNMHdr): LRESULT; overload;
     function SendItemExpand(ACode: Integer; AItem: TTreeViewItem; AAction: UINT): Boolean;
     function SendSelectChange(ACode: Integer; AOldItem, ANewItem: TTreeViewItem; AAction: UINT): Boolean;
+    function SendItemStateChange(ACode: Integer; AItem: TTreeViewItem; AOldState, ANewState: UINT): Boolean;
   private
     // Main routines
     FTempTextBuffer: Pointer;
@@ -781,6 +1057,7 @@ type
     FArrowCursor: HCURSOR;
     FHandCursor: HCURSOR;
     FMoveCursor: HCURSOR;
+    procedure DoUpdate2;
     procedure DoUpdate;
     procedure Update;
     procedure FullUpdate;
@@ -796,13 +1073,19 @@ type
     FStyle: UINT;
     FStyle2: UINT;
     FStyleEx: UINT;
-    FAutoCenter: Boolean;
     FAlwaysShowSelection: Boolean;
+    FAutoCenter: Boolean;
+    FBorder: Boolean;
+    FClientEdge: Boolean;
     FHasButtons: Boolean;
     FLinesAsRoot: Boolean;
+    FTrackSelect: Boolean;
     FDpi: UINT;
     FTheme: HTHEME;
     FDpiTheme: Boolean;
+    FTreeItemThemeExist: Boolean;
+    FButtonThemeExist: Boolean;
+    FHotButtonThemeExist: Boolean;
     FCXVScroll: Integer;
     FCYHScroll: Integer;
     FThemeButtonSize: TSize;
@@ -862,13 +1145,19 @@ type
     function GetCount: Integer;
     function GetItem(AIndex: Integer): TTreeViewItem;
     property Focused: Boolean read FFocused write SetFocused;
-    property AutoCenter: Boolean read FAutoCenter;
     property AlwaysShowSelection: Boolean read FAlwaysShowSelection;
+    property AutoCenter: Boolean read FAutoCenter;
+    property Border: Boolean read FBorder;
+    property ClientEdge: Boolean read FClientEdge;
     property HasButtons: Boolean read FHasButtons;
     property LinesAsRoot: Boolean read FLinesAsRoot;
+    property TrackSelect: Boolean read FTrackSelect;
     property Dpi: UINT read FDpi write SetDpi;
     property Themed: Boolean read GetThemed;
     property Theme: HTHEME read FTheme;
+    property TreeItemThemeExist: Boolean read FTreeItemThemeExist;
+    property ButtonThemeExist: Boolean read FButtonThemeExist;
+    property HotButtonThemeExist: Boolean read FHotButtonThemeExist;
     property ButtonSize: TSize read GetButtonSize;
     property Font: HFONT read FFont write SetFont;
     property BoldFont: HFONT read GetBoldFont;
@@ -973,6 +1262,8 @@ var
   PrevStateIconIndex: Integer;
   NewOverlayIndex: Integer;
   NewStateIconIndex: Integer;
+  PrevState: UINT;
+  NewState: UINT;
 begin
   NeedUpdate := False;
   NeedInvalidate := False;
@@ -1022,6 +1313,16 @@ begin
     begin
       PrevHasChildren := GetHasChildrenWithoutCallback;
       FChildren := AItem.cChildren;
+      case FChildren of
+        I_CHILDRENAUTO:
+          FKids := kCompute;
+        I_CHILDRENCALLBACK:
+          FKids := kCallback;
+        0:
+          FKids := kForceNo;
+      else
+        FKids := kForceYes;
+      end;
       if GetHasChildrenWithoutCallback <> PrevHasChildren then
         NeedUpdate := True;
     end;
@@ -1057,38 +1358,34 @@ begin
 
   if AItem.mask and TVIF_STATE <> 0 then
     begin
-      FState := (FState and not AItem.stateMask) or (AItem.state and AItem.stateMask);
+      PrevState := FState;
+      NewState := (FState and not AItem.stateMask) or (AItem.state and AItem.stateMask);
+      if NewState <> PrevState then
+        if not FTreeView.SendItemStateChange(TVN_ITEMCHANGINGW, Self, PrevState, NewState) then
+          begin
+            FState := NewState;
 
-      {if Selected <> PrevSelected then
-        if Selected then
-          begin
-            if not FTreeView.SelectItem(Self, False, TVC_UNKNOWN) then
-              FState := FState and not TVIS_SELECTED;
-          end
-        else
-          begin
-            if not FTreeView.SelectItem(nil, False, TVC_UNKNOWN) then
-              FState := FState or TVIS_SELECTED;
-          end;}
+            if Expanded <> PrevExpanded then
+              if Expanded then
+                begin
+                  if not Expand(TVE_EXPAND, TVC_UNKNOWN, False) then
+                    FState := FState and not TVIS_EXPANDED;
+                end
+              else
+                begin
+                  if not Expand(TVE_COLLAPSE, TVC_UNKNOWN, False) then
+                    FState := FState or TVIS_EXPANDED;
+                end;
 
-      if Expanded <> PrevExpanded then
-        if Expanded then
-          begin
-            if not Expand(TVE_EXPAND, TVC_UNKNOWN, False) then
-              FState := FState and not TVIS_EXPANDED;
-          end
-        else
-          begin
-            if not Expand(TVE_COLLAPSE, TVC_UNKNOWN, False) then
-              FState := FState or TVIS_EXPANDED;
+            if Bold <> PrevBold then
+              NeedUpdate := True;
+            if Expanded <> PrevExpanded then
+              NeedUpdate := True;
+            if Selected <> PrevSelected then
+              NeedInvalidate := True;
+
+            FTreeView.SendItemStateChange(TVN_ITEMCHANGEDW, Self, PrevState, NewState);
           end;
-
-      if Bold <> PrevBold then
-        NeedUpdate := True;
-      if Expanded <> PrevExpanded then
-        NeedUpdate := True;
-      if Selected <> PrevSelected then
-        NeedInvalidate := True;
     end;
 
   if NeedUpdate then
@@ -1122,7 +1419,7 @@ begin
     end;
   if AItem.mask and TVIF_IMAGE <> 0 then
     AItem.iImage := ImageIndex;
-  if AItem.mask and TVIF_PARAM <> 0 then
+  //if AItem.mask and TVIF_PARAM <> 0 then // Always
     AItem.lParam := FParam;
   if AItem.mask and TVIF_STATE <> 0 then
     AItem.state := FState;
@@ -1203,11 +1500,14 @@ end;
 
 function TTreeViewItem.Expand(ACode, AAction: UINT; ANotify: Boolean): Boolean;
 var
+  PrevExpanded: Boolean;
   RealCode: UINT;
 begin
   Result := False;
   RealCode := ACode and TVE_ACTIONMASK;
   if (RealCode = 0) or not HasChildren then Exit;
+
+  PrevExpanded := Expanded;
 
   if RealCode = TVE_TOGGLE then
     begin
@@ -1246,19 +1546,20 @@ begin
 
   FState := FState or TVIS_EXPANDEDONCE;
 
-  if (RealCode or TVE_COLLAPSERESET) = (TVE_COLLAPSE or TVE_COLLAPSERESET) then
+  if (ACode and (TVE_ACTIONMASK or TVE_COLLAPSERESET)) = (TVE_COLLAPSE or TVE_COLLAPSERESET) then
     begin
       FState := FState and not TVIS_EXPANDEDONCE;
-      {if Count > 0 then
-        Items_.DeleteAll;}
+      if Count > 0 then
+        Items_.DeleteAll;
+      FKids := kForceYes;
     end;
 
-  if not Expanded and IsChild(TreeView.SelectedItem) then
+  if not Expanded and IsChild(TreeView.FocusedItem) then
     begin
       if not TreeView.SelectItem(Self, True, AAction) then
         begin
-          TreeView.SelectedItem.FState := TreeView.SelectedItem.FState and not TVIS_SELECTED;
-          TreeView.FSelectedItem := nil;
+          TreeView.FocusedItem.FState := TreeView.FocusedItem.FState and not TVIS_SELECTED;
+          TreeView.FFocusedItem := nil;
         end;
     end;
 
@@ -1268,6 +1569,12 @@ begin
       TreeView.ExpandItemRect := BoundsRect;
     end;
   TreeView.Update;
+
+  if ((AAction = TVC_BYMOUSE) or (AAction = TVC_BYKEYBOARD)) and (Expanded <> PrevExpanded) then
+    begin
+      if Expanded then TreeView.DoAnimation(Self, amExpand, AAction = TVC_BYMOUSE)
+                  else TreeView.DoAnimation(Self, amCollapse, AAction = TVC_BYMOUSE);
+    end;
 
   Result := True;
 end;
@@ -1289,6 +1596,30 @@ begin
       Result := FParentItems.FParent.ExpandParents(AAction);
       if Result then
         Result := FParentItems.FParent.Expand(TVE_EXPAND, AAction, True);
+    end;
+end;
+
+procedure TTreeViewItem.PreparePosition1;
+var
+  ItemIndex: Integer;
+begin
+  FPrevLeft := FLeft;
+  FPrevTop := FTop;
+  if Expanded then
+    for ItemIndex := 0 to Count - 1 do
+      Items[ItemIndex].PreparePosition1;
+end;
+
+procedure TTreeViewItem.PreparePosition2;
+var
+  ItemIndex: Integer;
+  Item: TTreeViewItem;
+begin
+  for ItemIndex := 0 to Count - 1 do
+    begin
+      Item := Items[ItemIndex];
+      Item.FPrevLeft := Item.FLeft;
+      Item.FPrevTop := Item.FTop;
     end;
 end;
 
@@ -1365,21 +1696,6 @@ begin
       Items[ItemIndex].UpdateSize(ADC);
 end;
 
-procedure TTreeViewItem.PaintConnector(ADC: HDC; AIndex: Integer; ADest: TTreeViewItem);
-var
-  Points: packed array[0..3] of TPoint;
-begin
-  Points[0].X := Right;
-  Points[0].Y := Top + Round((Height / (Count + 1)) * (AIndex + 1));
-  Points[1].X := Points[0].X + TreeView.HorzSpace div 2;
-  Points[1].Y := Points[0].Y;
-  Points[3].X := ADest.Left;
-  Points[3].Y := ADest.Top + Round(ADest.Height / 2);
-  Points[2].X := Points[3].X - TreeView.HorzSpace div 2;
-  Points[2].Y := Points[3].Y;
-  FTreeView.PolyBezier(ADC, Points, 4, TreeView.LineColor);
-end;
-
 procedure FillRectWithColor(ADC: HDC; const ARect: TRect; AColor: TColorRef);
 var
   Brush: HBRUSH;
@@ -1407,6 +1723,47 @@ begin
   DeleteObject(Brush);
 end;
 
+procedure TTreeViewItem.PaintConnector(ADC: HDC; AIndex: Integer; ADest: TTreeViewItem);
+var
+  Points: packed array[0..3] of TPoint;
+begin
+  Points[0].X := Right;
+  Points[3].X := ADest.Left;
+  if Self = TreeView.AnimationItem then
+    case TreeView.AnimationMode of
+      amExpand:
+        Points[3].X := TreeView.CalcAnimation(Points[0].X, Points[3].X);
+      amCollapse:
+        Points[3].X := TreeView.CalcAnimation(Points[3].X, Points[0].X);
+    end;
+  Points[1].X := Points[0].X + (Points[3].X - Points[0].X) div 2;
+  Points[2].X := Points[1].X;
+
+  Points[0].Y := Top + Round((Height / (Count + 1)) * (AIndex + 1));
+  Points[3].Y := ADest.Top + Round(ADest.Height / 2);
+  if Self = TreeView.AnimationItem then
+    case TreeView.AnimationMode of
+      amExpand:
+        Points[3].Y := TreeView.CalcAnimation(Points[0].Y, Points[3].Y);
+      amCollapse:
+        Points[3].Y := TreeView.CalcAnimation(Points[3].Y, Points[0].Y);
+    end;
+  Points[1].Y := Points[0].Y;
+  Points[2].Y := Points[3].Y;
+
+  FTreeView.PolyBezier(ADC, Points, 4, TreeView.LineColor);
+
+  {MoveToEx(ADC, Points[0].X, Points[0].Y, nil);
+  LineTo(ADC,Points[1].X, Points[1].Y);
+  LineTo(ADC,Points[2].X, Points[2].Y);
+  LineTo(ADC,Points[3].X, Points[3].Y);}
+
+  {SetPixel(ADC, Points[0].X, Points[0].Y, $FF);
+  SetPixel(ADC, Points[1].X, Points[1].Y, $FF);
+  SetPixel(ADC, Points[2].X, Points[2].Y, $FF);
+  SetPixel(ADC, Points[3].X, Points[3].Y, $FF);}
+end;
+
 procedure TTreeViewItem.PaintConnectors(ADC: HDC; AUpdateRgn, ABackgroupRgn: HRGN; AEraseBackground: Boolean);
 var
   ConnectorRect: TRect;
@@ -1414,7 +1771,7 @@ var
   Item: TTreeViewItem;
   TempRgn: HRGN;
 begin
-  if Expanded and (Count > 0) then
+  if Expanded and (Count > 0) or (Self = TreeView.AnimationItem) then
     begin
       ConnectorRect.Left := Right;
       ConnectorRect.Right := ConnectorRect.Left + TreeView.HorzSpace;
@@ -1456,11 +1813,14 @@ var
   BackgroudColor: TColorRef;
 begin
   AFontColor := TreeView.TextColor;
-  if TreeView.Themed then
+  if TreeView.Themed and TreeView.TreeItemThemeExist then
     begin
       FillRectWithColor(ADC, ARect, TreeView.Color);
 
-      StateID := TREIS_NORMAL;
+      if TreeView.TrackSelect and (TreeView.HotItem = Self) then
+        StateID := TREIS_HOTSELECTED
+      else
+        StateID := TREIS_NORMAL;
       if not Enabled then
         begin
           StateID := TREIS_DISABLED;
@@ -1468,15 +1828,17 @@ begin
         end
       else
         if Selected then
-          if TreeView.Focused then
-            StateID := TREIS_SELECTED
-          else
-            if TreeView.AlwaysShowSelection then
-              begin
-                StateID := TREIS_SELECTED;
-                if IsThemePartDefined(TreeView.Theme, TVP_TREEITEM, TREIS_SELECTEDNOTFOCUS) then
-                  StateID := TREIS_SELECTEDNOTFOCUS;
-              end;
+          begin
+            if TreeView.Focused then
+              StateID := TREIS_SELECTED
+            else
+              if TreeView.AlwaysShowSelection then
+                begin
+                  StateID := TREIS_SELECTED;
+                  if IsThemePartDefined(TreeView.Theme, TVP_TREEITEM, TREIS_SELECTEDNOTFOCUS) then
+                    StateID := TREIS_SELECTEDNOTFOCUS;
+                end;
+          end;
       if StateID <> TREIS_NORMAL then
         DrawThemeBackground(TreeView.Theme, ADC, TVP_TREEITEM, StateID, ARect, nil);
     end
@@ -1543,17 +1905,20 @@ end;
 
 procedure TTreeViewItem.PaintButton(ADC: HDC; const ARect: TRect);
 var
+  PartID: Integer;
   StateID: Integer;
   Pen: HPEN;
   SavePen: HPEN;
   X, Y: Integer;
 begin
   if HasButton then
-    if TreeView.Themed then
+    if TreeView.Themed and TreeView.ButtonThemeExist then
       begin
+        if HotButton and TreeView.HotButtonThemeExist then PartID := TVP_HOTGLYPH
+                                                      else PartID := TVP_GLYPH;
         if Expanded then StateID := GLPS_OPENED
                     else StateID := GLPS_CLOSED;
-        DrawThemeBackground(TreeView.Theme, ADC, TVP_GLYPH, StateID, ARect, nil);
+        DrawThemeBackground(TreeView.Theme, ADC, PartID, StateID, ARect, nil);
       end
     else
       begin
@@ -1584,6 +1949,7 @@ var
   ItemIndex: Integer;
   FontColor: TColorRef;
   R: TRect;
+  PaintFocus: Boolean;
 begin
   PaintConnectors(ADC, AUpdateRgn, ABackgroupRgn, AEraseBackground);
 
@@ -1591,6 +1957,10 @@ begin
   if RectInRegion(AUpdateRgn, ItemRect) then
     begin
       PaintBackground(ADC, ItemRect, FontColor);
+
+      PaintFocus := False;
+      if TreeView.Focused and (Self = FTreeView.FocusedItem) then
+        PaintFocus := not TreeView.FHideFocus;
 
       NMTVCustomDraw.clrText := FontColor;
       NMTVCustomDraw.clrTextBk := CLR_NONE;
@@ -1605,8 +1975,12 @@ begin
             NMTVCustomDraw.nmcd.uItemState := NMTVCustomDraw.nmcd.uItemState or CDIS_SELECTED;
           if not Enabled then
             NMTVCustomDraw.nmcd.uItemState := NMTVCustomDraw.nmcd.uItemState or CDIS_DISABLED;
-          if FTreeView.Focused then
+          if PaintFocus then
             NMTVCustomDraw.nmcd.uItemState := NMTVCustomDraw.nmcd.uItemState or CDIS_FOCUS;
+          if Self = TreeView.HotItem then
+            NMTVCustomDraw.nmcd.uItemState := NMTVCustomDraw.nmcd.uItemState or CDIS_HOT;
+          if not Enabled then
+            NMTVCustomDraw.nmcd.uItemState := NMTVCustomDraw.nmcd.uItemState or CDIS_GRAYED;
           NMTVCustomDraw.nmcd.lItemlParam := FParam;
           NMTVCustomDraw.iLevel := Level;
           PaintRequest := FTreeView.SendDrawNotify(ADC, CDDS_ITEMPREPAINT, NMTVCustomDraw);
@@ -1618,7 +1992,9 @@ begin
         begin
           if NMTVCustomDraw.clrTextBk <> CLR_NONE then
             FillRectWithColor(ADC, ItemRect, NMTVCustomDraw.clrTextBk);
-          FrameRectWithColor(ADC, ItemRect, TreeView.LineColor);
+
+          if PaintFocus then DrawFocusRect(ADC, ItemRect)
+                        else FrameRectWithColor(ADC, ItemRect, TreeView.LineColor);
 
           if (PaintRequest and TVCDRF_NOIMAGES = 0) and HasStateIcon then
             begin
@@ -1654,10 +2030,10 @@ begin
           if HasButton then
             FrameRectWithColor(ADC, ButtonRect, $00FF00);{}
           {$ENDIF}
-        end;
 
-      if PaintRequest and CDRF_NOTIFYPOSTPAINT <> 0 then
-        FTreeView.SendDrawNotify(ADC, CDDS_ITEMPOSTPAINT, NMTVCustomDraw);
+          if PaintRequest and CDRF_NOTIFYPOSTPAINT <> 0 then
+            FTreeView.SendDrawNotify(ADC, CDDS_ITEMPOSTPAINT, NMTVCustomDraw);
+        end;
 
       if AEraseBackground then
         begin
@@ -1667,9 +2043,22 @@ begin
         end;
     end;
 
-  if Expanded then
+  if (TreeView.AnimationItem <> Self) and Expanded then
     for ItemIndex := 0 to Count - 1 do
       Items[ItemIndex].Paint(ADC, AUpdateRgn, ABackgroupRgn, AXOffset, AYOffset, AEraseBackground);
+end;
+
+procedure TTreeViewItem.MouseMove(const APoint: TPoint);
+begin
+  if TreeView.Themed and TreeView.HotButtonThemeExist then
+    HotButton := PtInRect(ButtonRect, APoint)
+  else
+    HotButton := False;
+end;
+
+procedure TTreeViewItem.MouseLeave;
+begin
+  HotButton := False;
 end;
 
 function TTreeViewItem.HasStateIcon: Boolean;
@@ -1732,43 +2121,37 @@ function TTreeViewItem.GetHasChildren: Boolean;
 var
   TVDispInfoW: TTVDispInfoW;
 begin
-  if Count > 0 then
-    Result := True
-  else
-    case FChildren of
-      I_CHILDRENAUTO: Result := {Count > 0}False;
-      I_CHILDRENCALLBACK:
-        begin
-          TVDispInfoW.item.mask := TVIF_HANDLE or TVIF_PARAM or TVIF_CHILDREN;
-          TVDispInfoW.item.hItem := HTreeItem(Self);
-          TVDispInfoW.item.lParam := FParam;
-          TVDispInfoW.item.cChildren := 0;
-          TreeView.SendNotify(TVN_GETDISPINFOW, @TVDispInfoW);
-          case TVDispInfoW.item.cChildren of
-            0: Result := False;
-            I_CHILDRENAUTO: Result := Count > 0;
-          else
-            Result := True;
-          end;
+  case Kids of
+    kCompute: Result := Count > 0;
+    kCallback:
+      begin
+        TVDispInfoW.item.mask := TVIF_HANDLE or TVIF_PARAM or TVIF_CHILDREN;
+        TVDispInfoW.item.hItem := HTreeItem(Self);
+        TVDispInfoW.item.lParam := FParam;
+        TVDispInfoW.item.cChildren := 0;
+        TreeView.SendNotify(TVN_GETDISPINFOW, @TVDispInfoW);
+        case TVDispInfoW.item.cChildren of
+          0: Result := False;
+          I_CHILDRENAUTO: Result := Count > 0;
+        else
+          Result := True;
         end;
-      0: Result := False;
-    else
-      Result := True;
-    end;
+      end;
+    kForceNo: Result := False;
+  else
+    Result := True;
+  end;
 end;
 
 function TTreeViewItem.GetHasChildrenWithoutCallback: Integer;
 begin
-  if Count > 0 then
-    Result := 1
+  case FKids of
+    kCompute: Result := Count;
+    kCallback: Result := -1;
+    kForceNo: Result := 0;
   else
-    case FChildren of
-      I_CHILDRENAUTO: Result := {Count > 0}0;
-      I_CHILDRENCALLBACK: Result := -1;
-      0: Result := 0;
-    else
-      Result := 1;
-    end;
+    Result := Count;
+  end;
 end;
 
 function TTreeViewItem.GetImageIndex: Integer;
@@ -1833,14 +2216,30 @@ begin
     Result := FExpandedImageIndex;
 end;
 
+function TTreeViewItem.GetLeft: Integer;
+begin
+  if TreeView.AnimationMode = amNone then
+    Result := FLeft
+  else
+    Result := TreeView.CalcAnimation(FPrevLeft, FLeft);
+end;
+
+function TTreeViewItem.GetTop: Integer;
+begin
+  if TreeView.AnimationMode = amNone then
+    Result := FTop
+  else
+    Result := TreeView.CalcAnimation(FPrevTop, FTop);
+end;
+
 function TTreeViewItem.GetRight: Integer;
 begin
-  Result := FLeft + FWidth;
+  Result := Left + Width;
 end;
 
 function TTreeViewItem.GetBottom: Integer;
 begin
-  Result := FTop + FHeight;
+  Result := Top + Height;
 end;
 
 function TTreeViewItem.GetBoundsRect: TRect;
@@ -1918,6 +2317,13 @@ end;
 function TTreeViewItem.GetItem(AIndex: Integer): TTreeViewItem;
 begin
   Result := FItems.Items[AIndex];
+end;
+
+procedure TTreeViewItem.SetHotButton(AHotButton: Boolean);
+begin
+  if FHotButton = AHotButton then Exit;
+  FHotButton := AHotButton;
+  TreeView.InvalidateItemButton(Self);
 end;
 
 //**************************************************************************************************
@@ -2030,7 +2436,19 @@ begin
   if AItem.mask and TVIF_INTEGRAL <> 0 then
     Result.FIntegral := AItem.iIntegral;
   if AItem.mask and TVIF_CHILDREN <> 0 then
-    Result.FChildren := AItem.cChildren;
+    begin
+      Result.FChildren := AItem.cChildren;
+      case AItem.cChildren of
+        I_CHILDRENAUTO:
+          Result.FKids := kCompute;
+        I_CHILDRENCALLBACK:
+          Result.FKids := kCallback;
+        0:
+          Result.FKids := kForceNo;
+      else
+        Result.FKids := kForceYes;
+      end;
+    end;
 
   TreeView.Update;
 end;
@@ -2101,7 +2519,7 @@ begin
   NMTreeView.itemOld.lParam := AItem.FParam;
   TreeView.SendNotify(TVN_DELETEITEMW, @NMTreeView);
 
-  if TreeView.SelectedItem = AItem then
+  if TreeView.FocusedItem = AItem then
     begin
       if AItem.Index_ < Count - 1 then
         NewSelectItem := Items[AItem.Index_ + 1]
@@ -2113,11 +2531,12 @@ begin
       TreeView.SelectItem(NewSelectItem, True, 0);
     end;
 
-  if TreeView.SelectedItem = AItem then TreeView.FSelectedItem := nil;
+  if TreeView.FocusedItem = AItem then TreeView.FFocusedItem := nil;
   if TreeView.MouseOverItem = AItem then TreeView.MouseOverItem := nil;
   if TreeView.ExpandItem = AItem then TreeView.ExpandItem := nil;
   if TreeView.ScrollItem = AItem then TreeView.ScrollItem := nil;
   if TreeView.InsertMaskItem = AItem then TreeView.InsertMaskItem := nil;
+  if TreeView.HotItem = AItem then TreeView.HotItem := nil;
 
   Position := AItem.Index_;
   CopyCount := Count - Position - 1;
@@ -2183,7 +2602,6 @@ begin
   FHorzBorder := 3;
   FVertSpace := 10;
   FHorzSpace := 30;
-  InitStyles2(TVS_EX_AUTOCENTER);
 end;
 
 destructor TTreeView.Destroy;
@@ -2193,49 +2611,101 @@ begin
     FItems.Free;
   if Assigned(FTempTextBuffer) then
     FreeMem(FTempTextBuffer);
+  if FBufferedPaintInited then
+    if Succeeded(FBufferedPaintInitResult) then
+      BufferedPaintUnInit;
   inherited Destroy;
+end;
+
+function TTreeView.HasBorder: Boolean;
+begin
+  Result := Border or ClientEdge;
 end;
 
 {$IFDEF NATIVE_BORDERS}
 procedure TTreeView.CaclClientRect(ARect, AClientRect: PRect);
-begin
-  GetThemeBackgroundContentRect(Theme, 0, TVP_TREEITEM, TREIS_NORMAL, ARect^, AClientRect);
-  if IsHorzScrollBarVisible then
-    Dec(AClientRect.Bottom, GetSystemMetricsForDpi_(SM_CYHSCROLL, Dpi, True));
-  if IsVertScrollBarVisible then
-    Dec(AClientRect.Right, GetSystemMetricsForDpi_(SM_CYHSCROLL, Dpi, True));
-end;
-
-procedure TTreeView.PaintClientRect(ARgn: HRGN);
 var
-  RC,
-  R2,
-  RW : TRect;
-  ContentRect: TRect;
-  DC : HDC;
+  SW: Integer;
 begin
-  DC := GetDCEx(FHandle, ARgn, DCX_WINDOW or DCX_INTERSECTRGN);
-  if DC = 0 then
-    DC := GetWindowDC(FHandle);
-  Windows.GetClientRect(FHandle, RC);
-  GetWindowRect(FHandle, RW);
-  MapWindowPoints(0, FHandle, RW, 2);
-  OffsetRect(RC, -RW.Left, -RW.Top);
-  ExcludeClipRect(DC, RC.Left, RC.Top, RC.Right, RC.Bottom);
-  OffsetRect(RW, -RW.Left, -RW.Top);
-  R2 := RW;
-
-  {if IsThemeBackgroundPartiallyTransparent(TabTheme, DC, TABP_PANE, 0) then
-  begin
-      DrawParentThemeBackground(Handle, DC, RW);
-  end;}
-
-  GetThemeBackgroundContentRect(Theme, DC, TVP_TREEITEM, TREIS_NORMAL, RW, @ContentRect);
-  ExcludeClipRect(DC, ContentRect.Left, ContentRect.Top, ContentRect.Right, ContentRect.Bottom);
-  DrawThemeBackground(Theme, DC, TVP_TREEITEM, TREIS_NORMAL, RW, nil);
-  ReleaseDC(FHandle, DC);
+  if HasBorder then
+    GetThemeBackgroundContentRect(Theme, 0, 0, 0, ARect^, AClientRect)
+  else
+    AClientRect^ := ARect^;
+  if IsHorzScrollBarVisible then
+    begin
+      SW := GetSystemMetricsForDpi_(SM_CYHSCROLL, Dpi, True);
+      Dec(AClientRect.Bottom, SW);
+    end;
+  if IsVertScrollBarVisible then
+    begin
+      SW := GetSystemMetricsForDpi_(SM_CXVSCROLL, Dpi, True);
+      if FStyleEx and WS_EX_LEFTSCROLLBAR = 0 then Dec(AClientRect.Right, SW)
+                                              else Inc(AClientRect.Left, SW);
+    end;
 end;
 {$ENDIF}
+
+function TTreeView.PaintClientRect(AClipRgn: HRGN): LRESULT;
+var
+  DC: HDC;
+  {$IFNDEF NATIVE_BORDERS}
+  HozEdge, VertEdge: Integer;
+  {$ENDIF}
+  WindowRect: TRect;
+  ClientRect: TRect;
+  ClipRgn2: HRGN;
+  TempRgn: HRGN;
+begin
+  if not Themed or not HasBorder then
+    Result := DefWindowProc(FHandle, WM_NCPAINT, AClipRgn, 0)
+  else
+    begin
+      GetWindowRect(FHandle, WindowRect);
+      if AClipRgn = NULLREGION then ClipRgn2 := CreateRectRgnIndirect(WindowRect)
+                               else ClipRgn2 := AClipRgn;
+
+      {$IFDEF NATIVE_BORDERS}
+      GetThemeBackgroundContentRect(Theme, 0, 0, 0, WindowRect, @ClientRect);
+      {$ELSE}
+      HozEdge := GetSystemMetrics(SM_CXEDGE);
+      VertEdge := GetSystemMetrics(SM_CYEDGE);
+      ClientRect.Left := WindowRect.Left + HozEdge;
+      ClientRect.Top := WindowRect.Top + VertEdge;
+      ClientRect.Right := WindowRect.Right - HozEdge;
+      ClientRect.Bottom := WindowRect.Bottom - VertEdge;
+      {$ENDIF}
+
+      with ClientRect do
+        TempRgn := CreateRectRgn(Left, Top, Right, Bottom);
+      CombineRgn(ClipRgn2, ClipRgn2, TempRgn, RGN_AND);
+      DeleteObject(TempRgn);
+
+      OffsetRect(ClientRect, -WindowRect.Left, -WindowRect.Top);
+      OffsetRect(WindowRect, -WindowRect.Left, -WindowRect.Top);
+
+      {TempRgn := CreateRectRgn(0, 0, 0, 0);
+      CombineRgn(TempRgn, ClipRgn2, 0, RGN_COPY);
+      DC := GetDCEx(FHandle, TempRgn, DCX_WINDOW or DCX_INTERSECTRGN);
+      if DC = 0 then} DC := GetWindowDC(FHandle);
+      with ClientRect do
+        ExcludeClipRect(DC, Left, Top, Right, Bottom);
+
+      if IsThemeBackgroundPartiallyTransparent(FTheme, 0, 0) then
+        DrawThemeParentBackground(FHandle, DC, @WindowRect);
+      DrawThemeBackground(Theme, DC, 0, 0, WindowRect, nil);
+      //FillRectWithColor(DC, rect, $FF);
+      ReleaseDC(FHandle, DC);
+
+      Result := DefWindowProc(FHandle, WM_NCPAINT, ClipRgn2, 0);
+      if ClipRgn2 <> AClipRgn then
+        DeleteObject(ClipRgn2);
+    end;
+end;
+
+function TTreeView.PixelsPerLine: UINT;
+begin
+  Result := (DPI * 10) div 96;
+end;
 
 function TTreeView.IsScrollBarVisible(ABar: DWORD): Boolean;
 var
@@ -2257,12 +2727,13 @@ begin
   Result := IsScrollBarVisible(OBJID_VSCROLL);
 end;
 
-procedure TTreeView.UpdateScrollBars;
+procedure TTreeView.UpdateScrollBarsEx(AClientWidth, AClientHeight: Integer);
 var
   ClientRect: TRect;
-  ClientWidth, ClientHeight: integer;
   ScrollInfo: TScrollInfo;
   XPos, YPos: Double;
+  OptimalWidth: Integer;
+  OptimalHeight: Integer;
   NeedVertScrollBar, NeedHorzScrollBar: Boolean;
 begin
   if FDestroying then Exit;
@@ -2274,15 +2745,15 @@ begin
       OffsetItemRect(ExpandItemRect);
 
     GetClientRect(FHandle, ClientRect);
-    ClientWidth := ClientRect.Right - ClientRect.Left;
-    ClientHeight := ClientRect.Bottom - ClientRect.Top;
+    AClientWidth := ClientRect.Right - ClientRect.Left;
+    AClientHeight := ClientRect.Bottom - ClientRect.Top;
 
     XPos := 0;
     YPos := 0;
 
     if IsVertScrollBarVisible then
       begin
-        Inc(ClientWidth, FCXVScroll);
+        Inc(AClientWidth, FCXVScroll);
         ScrollInfo.cbSize := SizeOf(ScrollInfo);
         ScrollInfo.fMask := SIF_POS or SIF_PAGE or SIF_RANGE;
         GetScrollInfo(FHandle, SB_VERT, ScrollInfo);
@@ -2292,7 +2763,7 @@ begin
       end;
     if IsHorzScrollBarVisible then
       begin
-        Inc(ClientHeight, FCYHScroll);
+        Inc(AClientHeight, FCYHScroll);
         ScrollInfo.cbSize := SizeOf(ScrollInfo);
         ScrollInfo.fMask := SIF_POS or SIF_PAGE or SIF_RANGE;
         GetScrollInfo(FHandle, SB_HORZ, ScrollInfo);
@@ -2301,20 +2772,31 @@ begin
             XPos := (nPos + nPage / 2) / (nMax - nMin);
       end;
 
-    if ClientWidth = 0 then exit;
-    if ClientHeight = 0 then exit;
+    if AClientWidth = 0 then exit;
+    if AClientHeight = 0 then exit;
 
-    NeedVertScrollBar := FOptimalHeight > ClientHeight;
+    if AnimationMode = amNone then
+      begin
+        OptimalWidth := FOptimalWidth;
+        OptimalHeight := FOptimalHeight;
+      end
+    else
+      begin
+        OptimalWidth := CalcAnimation(FPrevOptimalWidth, FOptimalWidth);
+        OptimalHeight := CalcAnimation(FPrevOptimalHeight, FOptimalHeight);
+      end;
+
+    NeedVertScrollBar := OptimalHeight > AClientHeight;
     if NeedVertScrollBar then
-      Dec(ClientWidth, FCXVScroll);
-    NeedHorzScrollBar := FOptimalWidth > ClientWidth;
+      Dec(AClientWidth, FCXVScroll);
+    NeedHorzScrollBar := OptimalWidth > AClientWidth;
     if NeedHorzScrollBar then
-      Dec(ClientHeight, FCYHScroll);
+      Dec(AClientHeight, FCYHScroll);
     if not NeedVertScrollBar then
       begin
-        NeedVertScrollBar := FOptimalHeight > ClientHeight;
+        NeedVertScrollBar := OptimalHeight > AClientHeight;
         if NeedVertScrollBar then
-          Dec(ClientWidth, FCXVScroll);
+          Dec(AClientWidth, FCXVScroll);
       end;
 
     ScrollInfo.cbSize := SizeOf(ScrollInfo);
@@ -2323,8 +2805,8 @@ begin
 
     if NeedVertScrollBar then
       begin
-        ScrollInfo.nMax := FOptimalHeight;
-        ScrollInfo.nPage := ClientHeight;
+        ScrollInfo.nMax := OptimalHeight;
+        ScrollInfo.nPage := AClientHeight;
         if Assigned(ExpandItem) then
           begin
             ScrollInfo.nPos := ExpandItem.Top - ExpandItemRect.Top;
@@ -2340,8 +2822,8 @@ begin
 
     if NeedHorzScrollBar then
       begin
-        ScrollInfo.nMax := FOptimalWidth;
-        ScrollInfo.nPage := ClientWidth;
+        ScrollInfo.nMax := OptimalWidth;
+        ScrollInfo.nPage := AClientWidth;
         if Assigned(ExpandItem) then
           begin
             ScrollInfo.nPos := ExpandItem.Left - ExpandItemRect.Left;
@@ -2360,9 +2842,22 @@ begin
   end;
 end;
 
+procedure TTreeView.UpdateScrollBars;
+var
+  ClientRect: TRect;
+  ClientWidth, ClientHeight: integer;
+begin
+  if FDestroying then Exit;
+  if FUpdateScrollBars then Exit;
+
+  GetClientRect(FHandle, ClientRect);
+  ClientWidth := ClientRect.Right - ClientRect.Left;
+  ClientHeight := ClientRect.Bottom - ClientRect.Top;
+  UpdateScrollBarsEx(ClientWidth, ClientHeight);
+  MouseMove(GetClientCursorPos);
+end;
+
 procedure TTreeView.ScrollMessage(AReason: WPARAM; ABar: DWORD);
-const
-  LineSize = 10;
 var
   ScrollInfo: TScrollInfo;
   NewPos: Integer;
@@ -2378,9 +2873,9 @@ begin
   NewPos := ScrollInfo.nPos;
   case LoWord(AReason) of
     TB_LINEUP:
-      Dec(NewPos, LineSize);
+      Dec(NewPos, PixelsPerLine);
     TB_LINEDOWN:
-      Inc(NewPos, LineSize);
+      Inc(NewPos, PixelsPerLine);
     TB_PAGEUP:
       Dec(NewPos, ScrollInfo.nPage);
     TB_PAGEDOWN:
@@ -2419,6 +2914,7 @@ end;
 procedure TTreeView.CalcBaseOffsets(var AXOffset, AYOffset: Integer);
 var
   ClientRect: TRect;
+  Optimal: Integer;
 begin
   GetClientRect(FHandle, ClientRect);
 
@@ -2426,7 +2922,13 @@ begin
     AXOffset := -GetScrollPos(FHandle, SB_HORZ)
   else
     if AutoCenter then
-      AXOffset := (ClientRect.Right - ClientRect.Left - FOptimalWidth) div 2
+      begin
+        if AnimationMode <> amNone then
+          Optimal := CalcAnimation(FPrevOptimalWidth, FOptimalWidth)
+        else
+          Optimal := FOptimalWidth;
+        AXOffset := (ClientRect.Right - ClientRect.Left - Optimal) div 2
+      end
     else
       AXOffset := 0;
 
@@ -2434,7 +2936,13 @@ begin
     AYOffset := -GetScrollPos(FHandle, SB_VERT)
   else
     if AutoCenter then
-      AYOffset := (ClientRect.Bottom - ClientRect.Top - FOptimalHeight) div 2
+      begin
+        if AnimationMode <> amNone then
+          Optimal := CalcAnimation(FPrevOptimalHeight, FOptimalHeight)
+        else
+          Optimal := FOptimalHeight;
+        AYOffset := (ClientRect.Bottom - ClientRect.Top - Optimal) div 2
+      end
     else
       AYOffset := 0;
 end;
@@ -2582,7 +3090,6 @@ var
   NMCustomDraw: TNMTVCustomDraw;
   ItemIndex: Integer;
 begin
-  //if FLockUpdate then Exit;
   SetWindowOrgEx(ADC, 0, 0, @FSavePoint);
   SetWindowOrgEx(ADC, FSavePoint.X, FSavePoint.Y, nil);
   CalcBaseOffsets(XOffset, YOffset);
@@ -2640,6 +3147,11 @@ var
   BackgroupRgn: HRGN;
   DC: HDC;
   PaintStruct: TPaintStruct;
+  PaintBuffer: HPAINTBUFFER;
+  DBWidth, DBHeight: Integer;
+  DBDC: HDC;
+  DBBitmap: HBITMAP;
+  SaveBitmap: HBITMAP;
 begin
   UpdateRgn := CreateRectRgn(0, 0, 0, 0);
   try
@@ -2651,7 +3163,51 @@ begin
           DC := BeginPaint(FHandle, PaintStruct);
           if DC = 0 then Exit;
           try
-            PaintTo(DC, UpdateRgn, BackgroupRgn);
+            if {True or{} (FStyle2 and TVS_EX_DOUBLEBUFFER <> 0) then
+              if DwmIsCompositionEnabled then
+                begin
+                  if not FBufferedPaintInited then
+                    begin
+                      FBufferedPaintInited := True;
+                      FBufferedPaintInitResult := BufferedPaintInit;
+                    end;
+                  PaintBuffer := BeginBufferedPaint(DC, PaintStruct.rcPaint, BPBF_COMPOSITED, nil, DBDC);
+                  if PaintBuffer <> 0 then
+                    try
+                      PaintTo(DBDC, UpdateRgn, BackgroupRgn);
+                      BufferedPaintSetAlpha(PaintBuffer, @PaintStruct.rcPaint, $FF);
+                    finally
+                      EndBufferedPaint(PaintBuffer, True);
+                    end;
+                end
+              else
+                begin
+                  DBWidth := PaintStruct.rcPaint.Right - PaintStruct.rcPaint.Left;
+                  DBHeight := PaintStruct.rcPaint.Bottom - PaintStruct.rcPaint.Top;
+                  DBDC := CreateCompatibleDC(DC);
+                  if DBDC <> 0 then
+                    try
+                      DBBitmap := CreateCompatibleBitmap(DC, DBWidth, DBHeight);
+                      if DBBitmap <> 0 then
+                        try
+                          SaveBitmap := SelectObject(DBDC, DBBitmap);
+                          try
+                            SetWindowOrgEx(DBDC, PaintStruct.rcPaint.Left, PaintStruct.rcPaint.Top, nil);
+                            PaintTo(DBDC, UpdateRgn, BackgroupRgn);
+                            SetWindowOrgEx(DBDC, 0, 0, nil);
+                            BitBlt(DC, PaintStruct.rcPaint.Left, PaintStruct.rcPaint.Top, DBWidth, DBHeight, DBDC, 0, 0, SRCCOPY);
+                          finally
+                            SelectObject(DBDC, SaveBitmap);
+                          end;
+                        finally
+                          DeleteObject(DBBitmap);
+                        end;
+                    finally
+                      DeleteDC(DBDC);
+                    end;
+                end
+            else
+              PaintTo(DC, UpdateRgn, BackgroupRgn);
           finally
             EndPaint(FHandle, PaintStruct);
           end;
@@ -2698,6 +3254,17 @@ begin
   InvalidateRect(FHandle, ItemRect, False);
 end;
 
+procedure TTreeView.InvalidateItemButton(AItem: TTreeViewItem);
+var
+  ItemRect: TRect;
+begin
+  if FDestroying then Exit;
+  if not AItem.IsVisible then Exit;
+  ItemRect := AItem.ButtonRect;
+  OffsetItemRect(ItemRect);
+  InvalidateRect(FHandle, ItemRect, False);
+end;
+
 procedure TTreeView.InvalidateInsertMask;
 var
   ItemRect: TRect;
@@ -2709,6 +3276,93 @@ begin
       OffsetItemRect(ItemRect);
       InvalidateRect(FHandle, ItemRect, False);
     end;
+end;
+
+function TTreeView.CalcAnimation(AStart, AFinish: Integer): Integer;
+begin
+  Result := AStart + Round((AFinish - AStart) / FAnimatioStepCount * FAnimatioStep);
+end;
+
+procedure TTreeView.DoAnimation(AItem: TTreeViewItem; AMode: TAnimationMode; AMouse: Boolean);
+var
+  StartItemPos: TPoint;
+
+  function CalcItemLeftTop: TPoint;
+  var
+    XOffset, YOffset: Integer;
+  begin
+    CalcBaseOffsets(XOffset, YOffset);
+    Result.X := AItem.Left + XOffset;
+    Result.Y := AItem.Top + YOffset;
+  end;
+
+  procedure UpdateCursorPos;
+  var
+    NewItemPos: TPoint;
+    CursorPos: TPoint;
+  begin
+    NewItemPos := CalcItemLeftTop;
+    GetCursorPos(CursorPos);
+    Inc(CursorPos.X, NewItemPos.X - StartItemPos.X);
+    Inc(CursorPos.Y, NewItemPos.Y - StartItemPos.Y);
+    SetCursorPos(CursorPos.X, CursorPos.Y);
+    StartItemPos := NewItemPos;
+  end;
+
+var
+  EnableAnimation: BOOL;
+  ItemIndex: Integer;
+begin
+  if not SystemParametersInfo(SPI_GETLISTBOXSMOOTHSCROLLING, 0, @EnableAnimation, 0) then
+    EnableAnimation := False;
+  if EnableAnimation and (OSVersionInfo.dwMajorVersion >= 6 {VistaOrLater}) then
+    begin
+      if not SystemParametersInfo(SPI_GETCLIENTAREAANIMATION, 0, @EnableAnimation, 0) then
+        EnableAnimation := False;
+    end;
+
+  for ItemIndex := 0 to Count - 1 do
+    Items[ItemIndex].PreparePosition1;
+  DoUpdate2;
+  AItem.PreparePosition2;
+
+  FAnimationMode := AMode;
+  try
+    FAnimatioStepCount := 10;
+    FAnimatioStep := 0;
+    if AMouse then
+      StartItemPos := CalcItemLeftTop;
+
+    if EnableAnimation then
+      begin
+        FAnimatioStep := 1;
+        FAnimationItem := AItem;
+
+        while FAnimatioStep < FAnimatioStepCount do
+          begin
+            UpdateScrollBars;
+            if AMouse then
+              UpdateCursorPos;
+
+            ExpandItem := AItem;
+            ExpandItemRect := AItem.BoundsRect;
+
+            Invalidate;
+            UpdateWindow(FHandle);
+            Sleep(10);
+
+            Inc(FAnimatioStep);
+          end;
+        FAnimationItem := nil;
+      end;
+  finally
+    FAnimationMode := amNone;
+  end;
+
+  UpdateScrollBars;
+  if AMouse then
+    UpdateCursorPos;
+  Invalidate;
 end;
 
 procedure TTreeView.HitTest(TVHitTestInfo: PTVHitTestInfo);
@@ -2790,8 +3444,9 @@ end;
 function TTreeView.SelectItem(AItem: TTreeViewItem; ANotify: Boolean; AAction: UINT): Boolean;
 var
   OldSelected: TTreeViewItem;
+  OldState, NewState: UINT;
 begin
-  if FSelectedItem = AItem then
+  if FFocusedItem = AItem then
     begin
       Result := True;
       Exit;
@@ -2800,20 +3455,34 @@ begin
   Result := False;
   if Assigned(AItem) and not AItem.ExpandParents(AAction) then Exit;
 
-  if ANotify and SendSelectChange(TVN_SELCHANGINGW, FSelectedItem, AItem, AAction) then Exit;
+  if ANotify and SendSelectChange(TVN_SELCHANGINGW, FFocusedItem, AItem, AAction) then Exit;
 
-  if Assigned(FSelectedItem) then
+  if Assigned(FFocusedItem) then
     begin
-      FSelectedItem.FState := FSelectedItem.FState and not TVIS_SELECTED;
-      InvalidateItem(FSelectedItem);
+      OldState := FFocusedItem.FState;
+      NewState := FFocusedItem.FState and not TVIS_SELECTED;
+      if not (ANotify and SendItemStateChange(TVN_ITEMCHANGINGW, FFocusedItem, OldState, NewState)) then
+        begin
+          FFocusedItem.FState := NewState;
+          if ANotify then
+            SendItemStateChange(TVN_ITEMCHANGEDW, FFocusedItem, OldState, NewState);
+        end;
+      InvalidateItem(FFocusedItem);
     end;
 
-  OldSelected := FSelectedItem;
-  FSelectedItem := AItem;
+  OldSelected := FFocusedItem;
+  FFocusedItem := AItem;
 
   if Assigned(AItem) then
     begin
-      AItem.FState := AItem.FState or TVIS_SELECTED;
+      OldState := AItem.FState;
+      NewState := AItem.FState or TVIS_SELECTED;
+      if not (ANotify and SendItemStateChange(TVN_ITEMCHANGINGW, AItem, OldState, NewState)) then
+        begin
+          AItem.FState := AItem.FState or TVIS_SELECTED;
+          if ANotify then
+            SendItemStateChange(TVN_ITEMCHANGEDW, AItem, OldState, NewState);
+        end;
       {if AAction = TVC_BYMOUSE then
         begin
           ScrollItem := AItem;
@@ -2832,7 +3501,7 @@ end;
 
 procedure TTreeView.UpdateSelected(AAction: UINT);
 begin
-  if not Assigned(SelectedItem) then
+  if not Assigned(FocusedItem) then
     if Assigned(FItems) and (FItems.Count > 0) then
       SelectItem(FItems.Items[0], True, AAction);
 end;
@@ -2872,6 +3541,27 @@ begin
       Result.Right := 0;
       Result.Bottom := 0;
     end;
+end;
+
+procedure TTreeView.SetHotItem(AHotItem: TTreeViewItem);
+begin
+  if FHotItem = AHotItem then Exit;
+  if Assigned(FHotItem) then
+    begin
+      FHotItem.MouseLeave;
+      if TrackSelect then
+        InvalidateItem(FHotItem);
+    end;
+  FHotItem := AHotItem;
+  if Assigned(FHotItem) then
+    if TrackSelect then
+      InvalidateItem(FHotItem);
+end;
+
+function TTreeView.GetClientCursorPos: TPoint;
+begin
+  GetCursorPos(Result);
+  ScreenToClient(FHandle, Result);
 end;
 
 procedure TTreeView.KeyDown(AKeyCode: DWORD; AFlags: DWORD);
@@ -2914,7 +3604,7 @@ begin
             VK_RIGHT,
             VK_PRIOR,
             VK_NEXT:
-              if not Assigned(SelectedItem) then
+              if not Assigned(FocusedItem) then
                 begin
                   UpdateSelected(TVC_BYKEYBOARD);
                   Exit;
@@ -2924,42 +3614,42 @@ begin
           case AKeyCode of
             VK_UP, VK_PRIOR:
               begin
-                if SelectedItem.Index_ > 0 then
-                  SelectItem(SelectedItem.ParentItems.Items[SelectedItem.Index_ - 1], True, TVC_BYKEYBOARD)
+                if FocusedItem.Index_ > 0 then
+                  SelectItem(FocusedItem.ParentItems.Items[FocusedItem.Index_ - 1], True, TVC_BYKEYBOARD)
                 else
-                  if Assigned(SelectedItem.ParentItems.Parent) then
-                    SelectItem(SelectedItem.ParentItems.Parent, True, TVC_BYKEYBOARD)
+                  if Assigned(FocusedItem.ParentItems.Parent) then
+                    SelectItem(FocusedItem.ParentItems.Parent, True, TVC_BYKEYBOARD)
               end;
             VK_DOWN, VK_NEXT:
               begin
-                if SelectedItem.Index_ < SelectedItem.ParentItems.Count - 1 then
-                  SelectItem(SelectedItem.ParentItems.Items[SelectedItem.Index_ + 1], True, TVC_BYKEYBOARD)
+                if FocusedItem.Index_ < FocusedItem.ParentItems.Count - 1 then
+                  SelectItem(FocusedItem.ParentItems.Items[FocusedItem.Index_ + 1], True, TVC_BYKEYBOARD)
                 else
-                  if Assigned(SelectedItem.ParentItems.Parent) then
-                    SelectItem(SelectedItem.ParentItems.Parent, True, TVC_BYKEYBOARD)
+                  if Assigned(FocusedItem.ParentItems.Parent) then
+                    SelectItem(FocusedItem.ParentItems.Parent, True, TVC_BYKEYBOARD)
               end;
             VK_LEFT, VK_BACK:
               begin
-                if Assigned(SelectedItem.ParentItems.Parent) then
-                  SelectItem(SelectedItem.ParentItems.Parent, True, TVC_BYKEYBOARD)
+                if Assigned(FocusedItem.ParentItems.Parent) then
+                  SelectItem(FocusedItem.ParentItems.Parent, True, TVC_BYKEYBOARD)
               end;
             VK_RIGHT:
               begin
-                if not SelectedItem.Expanded then
-                  SelectedItem.Expand(TVE_EXPAND, TVC_BYKEYBOARD, True)
+                if not FocusedItem.Expanded then
+                  FocusedItem.Expand(TVE_EXPAND, TVC_BYKEYBOARD, True)
                 else
-                  if SelectedItem.Count > 0 then
-                    SelectItem(SelectedItem.Items[0], True, TVC_BYKEYBOARD)
+                  if FocusedItem.Count > 0 then
+                    SelectItem(FocusedItem.Items[0], True, TVC_BYKEYBOARD)
               end;
             VK_SUBTRACT:
-              if Assigned(SelectedItem) and SelectedItem.Expanded then
-                SelectedItem.Expand(TVE_COLLAPSE, TVC_BYKEYBOARD, True);
+              if Assigned(FocusedItem) and FocusedItem.Expanded then
+                FocusedItem.Expand(TVE_COLLAPSE, TVC_BYKEYBOARD, True);
             VK_ADD:
-              if Assigned(SelectedItem) and not SelectedItem.Expanded then
-                SelectedItem.Expand(TVE_EXPAND, TVC_BYKEYBOARD, True);
+              if Assigned(FocusedItem) and not FocusedItem.Expanded then
+                FocusedItem.Expand(TVE_EXPAND, TVC_BYKEYBOARD, True);
             VK_MULTIPLY:
-              if Assigned(SelectedItem) then
-                SelectedItem.FullExpand(TVE_EXPAND, TVC_BYKEYBOARD, True);
+              if Assigned(FocusedItem) then
+                FocusedItem.FullExpand(TVE_EXPAND, TVC_BYKEYBOARD, True);
             VK_HOME:
               SelectItem(Items[0], True, TVC_BYKEYBOARD);
             VK_END:
@@ -3021,11 +3711,27 @@ begin
   SetFocus(FHandle);
 end;
 
+procedure TTreeView.TrackMouse;
+var
+  EventTrack: Windows.TTrackMouseEvent;
+begin
+  if FTrackMouse then Exit;
+  FTrackMouse := True;
+  EventTrack.cbSize := SizeOf(EventTrack);
+  EventTrack.dwFlags := TME_LEAVE or TME_HOVER;
+  EventTrack.hwndTrack := FHandle;
+  EventTrack.dwHoverTime := HOVER_DEFAULT;
+  TrackMouseEvent(EventTrack);
+end;
+
 procedure TTreeView.MouseMove(APoint: TPoint);
 var
   XOffset, YOffset: Integer;
   ScrollInfo: TScrollInfo;
+  Item: TTreeViewItem;
 begin
+  TrackMouse;
+
   if FMoveMode then
     begin
       XOffset := 0;
@@ -3061,6 +3767,105 @@ begin
 
       if (XOffset <> 0) or (YOffset <> 0) then
         ScrollWindowEx(FHandle, -XOffset, -YOffset, nil, nil, 0, nil, SW_INVALIDATE);
+    end
+  else
+    begin
+      if Count = 0 then Exit;
+      OffsetMousePoint(APoint);
+      Item := Items_.ItemAtPos(APoint);
+      HotItem := Item;
+      if Assigned(Item) then
+        Item.MouseMove(APoint);
+    end;
+end;
+
+procedure TTreeView.MouseHover(APoint: TPoint);
+begin
+  TrackMouse;
+end;
+
+procedure TTreeView.MouseLeave;
+begin
+  FTrackMouse := False;
+  if not FMoveMode then
+    HotItem := nil;
+end;
+
+procedure TTreeView.MouseWheel(ADelta: Integer; AVert: Boolean);
+var
+  Bar: UINT;
+  ScrollInfo: TScrollInfo;
+  SysParam: UINT;
+  LinesPerWHEELDELTA: UINT;
+  Lines: Integer;
+  Now: UINT;
+  NewPos: Integer;
+  X, Y: Integer;
+begin
+  if AVert then
+    begin
+      if not IsVertScrollBarVisible then Exit;
+      Bar := SB_VERT
+    end
+  else
+    begin
+      if not IsHorzScrollBarVisible then Exit;
+      Bar := SB_HORZ
+    end;
+
+  ScrollInfo.cbSize := SizeOf(ScrollInfo);
+  ScrollInfo.fMask := SIF_POS or SIF_PAGE or SIF_RANGE;
+  GetScrollInfo(FHandle, Bar, ScrollInfo);
+
+  if AVert then SysParam := SPI_GETWHEELSCROLLLINES
+           else SysParam := SPI_GETWHEELSCROLLCHARS;
+  if not SystemParametersInfo(SysParam, 0, @LinesPerWHEELDELTA, 0) then
+    LinesPerWHEELDELTA := 3;
+  if LinesPerWHEELDELTA = WHEEL_PAGESCROLL then
+    LinesPerWHEELDELTA := ScrollInfo.nPage
+  else
+    LinesPerWHEELDELTA := LinesPerWHEELDELTA * PixelsPerLine;
+  if LinesPerWHEELDELTA > ScrollInfo.nPage then
+    LinesPerWHEELDELTA := ScrollInfo.nPage;
+
+  Now := GetTickCount;
+  if Cardinal(Now - FWheelActivity[AVert]) > GetDoubleClickTime * 2 then
+    FWheelAccumulator[AVert] := 0
+  else
+    if (FWheelAccumulator[AVert] > 0) = (ADelta < 0) then
+      FWheelAccumulator[AVert] := 0;
+  FWheelActivity[AVert] := Now;
+
+  if LinesPerWHEELDELTA > 0 then
+    begin
+      Inc(FWheelAccumulator[AVert], ADelta);
+      Lines := (FWheelAccumulator[AVert] * Integer(LinesPerWHEELDELTA)) div WHEEL_DELTA;
+      Dec(FWheelAccumulator[AVert], (Lines * WHEEL_DELTA) div Integer(LinesPerWHEELDELTA));
+    end
+  else
+    begin
+      Lines := 0;
+      FWheelAccumulator[AVert] := 0;
+    end;
+
+  NewPos := ScrollInfo.nPos - Lines;
+
+  NewPos := Max(NewPos, 0);
+  NewPos := Min(NewPos, ScrollInfo.nMax - Integer(ScrollInfo.nPage));
+  if NewPos <> ScrollInfo.nPos then
+    begin
+      SetScrollPos(FHandle, Bar, NewPos, True);
+      if not AVert then
+        begin
+          X := ScrollInfo.nPos - NewPos;
+          Y := 0;
+        end
+      else
+        begin
+          X := 0;
+          Y := ScrollInfo.nPos - NewPos;
+        end;
+      ScrollWindowEx(FHandle, X, Y, nil, nil, 0, nil, SW_INVALIDATE);
     end;
 end;
 
@@ -3150,7 +3955,7 @@ begin
 
   if AWnd <> Windows.HWND(-1) then
     begin
-      if AWnd <> 0 then ID := GetDlgCtrlID(AWnd)
+      if AWnd <> 0 then ID := GetDlgCtrlID(AWnd) // GetWindowLongPtrW(hwnd, GWL_ID)?
                    else ID := 0;
 
       if not Assigned(ANMHdr) then
@@ -3308,14 +4113,14 @@ begin
   NMTreeView.itemNew.lParam := AItem.FParam;
   NMTreeView.itemNew.iImage := AItem.ImageIndex;
   NMTreeView.itemNew.iSelectedImage := AItem.SelectedImageIndex;
-  case AItem.FChildren of
-    I_CHILDRENCALLBACK,
-    1:
+  case AItem.FKids of
+    kCallback,
+    kForceYes:
       begin
         NMTreeView.itemNew.cChildren := 1;
         NMTreeView.itemNew.mask := NMTreeView.itemNew.mask or TVIF_CHILDREN;
       end;
-    0:
+    kForceNo:
       begin
         NMTreeView.itemNew.cChildren := 0;
         NMTreeView.itemNew.mask := NMTreeView.itemNew.mask or TVIF_CHILDREN;
@@ -3362,6 +4167,18 @@ begin
   Result := SendNotify(ACode, @NMTreeView) <> 0;
 end;
 
+function TTreeView.SendItemStateChange(ACode: Integer; AItem: TTreeViewItem; AOldState, ANewState: UINT): Boolean;
+var
+  NMTVItemChange: TNMTVItemChange;
+begin
+  NMTVItemChange.uChanged := TVIF_STATE;
+  NMTVItemChange.hItem := HTREEITEM(AItem);
+  NMTVItemChange.uStateNew := ANewState;
+  NMTVItemChange.uStateOld := AOldState;
+  NMTVItemChange.lParam := AItem.FParam;
+  Result := SendNotify(ACode, @NMTVItemChange) <> 0;
+end;
+
 procedure MoveDownChilds(AParent: TTreeViewItem; ADelta: Integer);
 var
   ItemIndex: Integer;
@@ -3371,7 +4188,8 @@ begin
     begin
       Item := AParent.Items[ItemIndex];
       Inc(Item.FTop, ADelta);
-      MoveDownChilds(Item, ADelta);
+      if Item.Expanded then
+        MoveDownChilds(Item, ADelta);
     end;
 end;
 
@@ -3439,7 +4257,7 @@ begin
 end;
 {$ENDIF}
 
-procedure TTreeView.DoUpdate;
+procedure TTreeView.DoUpdate2;
 var
   {$IFDEF DEBUG}
   SaveXOffset: Integer;
@@ -3526,7 +4344,8 @@ var
 
     StartTop := AItem.Top;
     AItem.Top := FindNewTop(AItem.BoundsRectEx, Region);
-    MoveDownChilds(AItem, AItem.Top - StartTop);
+    if AItem.Expanded then
+      MoveDownChilds(AItem, AItem.Top - StartTop);
 
     FProcessedItems[ProcessedCount] := AItem;
     Inc(ProcessedCount);
@@ -3550,12 +4369,13 @@ var
   ItemIndex: Integer;
   Item: TTreeViewItem;
 begin
-  if FLockUpdate or (FUpdateCount > 0) or not FNeedUpdateItemPositions or FDestroying then Exit;
   FNeedUpdateItemPositions := False;
 
   {$IFDEF DEBUG}
   CalcBaseOffsets(SaveXOffset, SaveYOffset);
   {$ENDIF}
+  FPrevOptimalWidth := FOptimalWidth;
+  FPrevOptimalHeight := FOptimalHeight;
   FOptimalWidth := 0;
   FOptimalHeight := 0;
   if Count > 0 then
@@ -3592,7 +4412,12 @@ begin
           ReleaseDC(FHandle, DC);
         end;
     end;
+end;
 
+procedure TTreeView.DoUpdate;
+begin
+  if FLockUpdate or (FUpdateCount > 0) or not FNeedUpdateItemPositions or FDestroying then Exit;
+  DoUpdate2;
   UpdateScrollBars;
   Invalidate;
 end;
@@ -3649,13 +4474,6 @@ begin
 end;
 
 function TTreeView.WndProc(AMsg: UINT; AWParam: WPARAM; ALParam: LPARAM): LRESULT;
-
-  function GetClientCursorPos: TPoint;
-  begin
-    GetCursorPos(Result);
-    ScreenToClient(FHandle, Result);
-  end;
-
 var
   {$IFDEF NATIVE_BORDERS}
   R: TRect;
@@ -3671,8 +4489,8 @@ var
   TVHitTestInfo: PTVHitTestInfo;
   NMMouse: TNMMouse;
   CursorPos: TPoint;
-  Wheel: SHORT;
-  Reason: Integer;
+  XOffset, YOffset: Integer;
+  PrevHideFocus: Boolean;
 begin
   Inc(FUpdateCount);
   try
@@ -3680,14 +4498,15 @@ begin
     case AMsg of
       WM_NCCREATE:
         begin
-          Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
           CreateStruct := PCreateStruct(ALParam);
           FParentHandle := CreateStruct.hwndParent;
           InitStyles(CreateStruct.style);
+          InitStyles2(TVS_EX_DOUBLEBUFFER or TVS_EX_AUTOCENTER);
           InitStylesEx(CreateStruct.dwExStyle);
           FUnicode := SendMessage(FParentHandle, WM_NOTIFYFORMAT, FHandle, NF_QUERY) = NFR_UNICODE;
           FSysFont := True;
           Dpi := GetDpiForWindow(FHandle);
+          FHideFocus := SendMessage(FHandle, WM_QUERYUISTATE, 0, 0) <> UISF_HIDEFOCUS;
         end;
       WM_DESTROY:
         begin
@@ -3698,6 +4517,7 @@ begin
           DeleteFont;
           Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
         end;
+      WM_NCDESTROY:;
       WM_NOTIFYFORMAT:
         begin
           if ALParam = NF_QUERY then
@@ -3717,13 +4537,9 @@ begin
           if Themed then
             CaclClientRect(@R, PRect(ALParam));
         end;
-      WM_NCPAINT:
-        begin
-          Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
-          if Themed then
-            PaintClientRect(AWParam);
-        end;
       {$ENDIF}
+      WM_NCPAINT:
+       PaintClientRect(AWParam);
 
       WM_HSCROLL:
         ScrollMessage(AWParam, SB_HORZ);
@@ -3849,16 +4665,54 @@ begin
 
       WM_SETREDRAW:
         SetLockUpdate(AWParam = 0);
+      WM_UPDATEUISTATE:
+        begin
+          Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
+          if HiWord(AWParam) and UISF_HIDEFOCUS <> 0 then
+            begin
+              PrevHideFocus := FHideFocus;
+              case LoWord(AWParam) of
+                UIS_SET:   FHideFocus := True;
+                UIS_CLEAR: FHideFocus := False;
+              end;
+              //FHideFocus := SendMessage(FHandle, WM_QUERYUISTATE, 0, 0) <> UISF_HIDEFOCUS;
+              if FHideFocus <> PrevHideFocus then
+                if Focused and Assigned(FocusedItem) then
+                  InvalidateItem(FocusedItem);
+            end;
+        end;
       WM_ERASEBKGND:
         Result := 1;
       WM_PAINT:
-        Paint;
+        if AWParam = 0 then Paint
+                       else PaintClient(AWParam);
       WM_PRINTCLIENT:
         PaintClient(AWParam);
+      WM_WINDOWPOSCHANGING:
+        begin
+          Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
+          if not FResizeMode then
+            CalcBaseOffsets(FPrevXOffset, FPrevYOffset);
+        end;
+      WM_WINDOWPOSCHANGED:
+        begin
+          Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
+        end;
       WM_SIZE:
         begin
           Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
-          UpdateScrollBars;
+          if not FResizeMode then
+            begin
+              FResizeMode := True;
+              try
+                UpdateScrollBarsEx(LoWord(ALParam), HiWord(ALParam));
+                CalcBaseOffsets(XOffset, YOffset);
+                if (XOffset <> FPrevXOffset) or (YOffset <> FPrevYOffset) then
+                  ScrollWindowEx(FHandle, XOffset - FPrevXOffset, YOffset - FPrevYOffset, nil, nil, 0, nil, SW_INVALIDATE);
+              finally
+                FResizeMode := False;
+              end;
+            end;
         end;
 
       WM_SETFOCUS:
@@ -3908,7 +4762,10 @@ begin
         Result := DLGC_WANTARROWS or DLGC_WANTCHARS;
       WM_KEYDOWN,
       WM_SYSKEYDOWN:
-        KeyDown(AWParam, ALParam);
+        begin
+          Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
+          KeyDown(AWParam, ALParam);
+        end;
 
       WM_LBUTTONDOWN:
         LButtonDown(GetClientCursorPos);
@@ -3920,16 +4777,14 @@ begin
         RButtonDown(GetClientCursorPos);
       WM_MOUSEMOVE:
         MouseMove(GetClientCursorPos);
+      WM_MOUSEHOVER:
+        MouseHover(GetClientCursorPos);
+      WM_MOUSELEAVE:
+        MouseLeave;
       WM_MOUSEWHEEL:
-        begin
-          Wheel := HiWord(AWParam);
-          if Wheel > 0 then Reason := TB_LINEUP
-                       else Reason := TB_LINEDOWN;
-          if IsVertScrollBarVisible then
-            ScrollMessage(Reason, SB_VERT)
-          else
-            ScrollMessage(Reason, SB_HORZ);
-        end;
+        MouseWheel(Short(HiWord(AWParam)), True);
+      WM_MOUSEHWHEEL:
+        MouseWheel(Short(HiWord(AWParam)), False);
       WM_CAPTURECHANGED:
         FMoveMode := False;
       WM_TIMER:
@@ -3996,7 +4851,7 @@ begin
             if Count > 0 then
               Result := LRESULT(Items[0]);
           TVGN_CARET:
-            Result := LRESULT(SelectedItem);
+            Result := LRESULT(FocusedItem);
         else
           TreeItem := TTreeViewItem(ALParam);
           if not Assigned(TreeItem) then Exit;
@@ -4005,11 +4860,12 @@ begin
       TVM_DELETEITEM:
         if (ALPARAM = LPARAM(TVI_ROOT)) or (ALPARAM = 0) then
           begin
-            FSelectedItem := nil;
+            FFocusedItem := nil;
             FMouseOverItem := nil;
             FExpandItem := nil;
             FScrollItem := nil;
             FInsertMaskItem := nil;
+            FHotItem := nil;
             if Assigned(FItems) then
               FItems.DeleteAll;
             Result := 1;
@@ -4058,7 +4914,7 @@ begin
       TVM_GETCOUNT:
         Result := FTotalCount;
       TVM_GETSELECTEDCOUNT:
-        if Assigned(SelectedItem) then Result := 1;
+        if Assigned(FocusedItem) then Result := 1;
       TVM_HITTEST:
         begin
           TVHitTestInfo := PTVHitTestInfo(ALParam);
@@ -4088,16 +4944,18 @@ begin
   FFocused := AFocused;
   if FFocused then
     UpdateSelected(TVC_BYMOUSE);
-  if Assigned(SelectedItem) then
-    InvalidateItem(SelectedItem);
+  if Assigned(FocusedItem) then
+    InvalidateItem(FocusedItem);
 end;
 
 procedure TTreeView.InitStyles(AStyles: UINT);
 begin
   FStyle := AStyles;
+  FBorder := AStyles and WS_BORDER <> 0;
   FAlwaysShowSelection := AStyles and TVS_SHOWSELALWAYS <> 0;
   FHasButtons := AStyles and TVS_HASBUTTONS <> 0;
   FLinesAsRoot := AStyles and TVS_LINESATROOT <> 0;
+  FTrackSelect := AStyles and TVS_TRACKSELECT <> 0;
 end;
 
 procedure TTreeView.InitStyles2(AStyles2: UINT);
@@ -4109,6 +4967,7 @@ end;
 procedure TTreeView.InitStylesEx(AStylesEx: UINT);
 begin
   FStyleEx := AStylesEx;
+  FClientEdge := AStylesEx and WS_EX_CLIENTEDGE <> 0;
 end;
 
 procedure TTreeView.SetStyle(AStyle: UINT);
@@ -4119,6 +4978,7 @@ var
   PrevAlwaysShowSelection: Boolean;
   PrevHasButtons: Boolean;
   PrevLinesAsRoot: Boolean;
+  PrevTrackSelect: Boolean;
 begin
   NeedUpdate := False;
   NeedFullUpdate := False;
@@ -4127,16 +4987,19 @@ begin
   PrevAlwaysShowSelection := AlwaysShowSelection;
   PrevHasButtons := HasButtons;
   PrevLinesAsRoot := LinesAsRoot;
+  PrevTrackSelect := TrackSelect;
 
   InitStyles(AStyle);
 
   if AlwaysShowSelection <> PrevAlwaysShowSelection then
-    if not Focused and Assigned(SelectedItem) then
+    if not Focused and Assigned(FocusedItem) then
       NeedInvalidate := True;
   if HasButtons <> PrevHasButtons then
     NeedFullUpdate := True;
   if LinesAsRoot <> PrevLinesAsRoot then
     NeedFullUpdate := True;
+  if TrackSelect <> PrevTrackSelect then
+    NeedInvalidate := True;
 
   if NeedFullUpdate then
     FullUpdate
@@ -4220,6 +5083,9 @@ begin
       CloseThemeData(FTheme);
       FTheme := 0;
     end;
+  FTreeItemThemeExist := False;
+  FButtonThemeExist := False;
+  FHotButtonThemeExist := False;
 end;
 
 procedure TTreeView.OpenTheme;
@@ -4240,11 +5106,16 @@ begin
             FTheme := OpenThemeDataEx(FHandle, VSCLASS_TREEVIEW, OTD_FORCE_RECT_SIZING);
         end;
       if FTheme <> 0 then
-        if not Succeeded(GetThemePartSize(FTheme, 0, TVP_GLYPH, GLPS_CLOSED, nil, TS_TRUE, FThemeButtonSize)) then
-          begin
-            FThemeButtonSize.cx := 15 * Dpi div 96;
-            FThemeButtonSize.cy := FThemeButtonSize.cx;
-          end;
+        begin
+          FTreeItemThemeExist := IsThemePartDefined(FTheme, TVP_TREEITEM, 0);
+          FButtonThemeExist := IsThemePartDefined(FTheme, TVP_GLYPH, 0);
+          FHotButtonThemeExist := IsThemePartDefined(FTheme, TVP_HOTGLYPH, 0);
+          if not (FButtonThemeExist and FHotButtonThemeExist and Succeeded(GetThemePartSize(FTheme, 0, TVP_GLYPH, GLPS_CLOSED, nil, TS_TRUE, FThemeButtonSize))) then
+            begin
+              FThemeButtonSize.cx := 15 * Dpi div 96;
+              FThemeButtonSize.cy := FThemeButtonSize.cx;
+            end;
+        end;
     end;
   FullUpdate;
 end;
@@ -4297,8 +5168,8 @@ end;
 
 function TTreeView.GetButtonSize: TSize;
 begin
-  if Themed then Result := FThemeButtonSize
-            else Result := FButtonSize;
+  if Themed and ButtonThemeExist then Result := FThemeButtonSize
+                                 else Result := FButtonSize;
 end;
 
 procedure TTreeView.SetFont(AFont: HFONT);
@@ -4510,21 +5381,30 @@ begin
     case AMsg of
       WM_NCCREATE:
         begin
+          Result := DefWindowProc(AWindow, AMsg, AWParam, ALParam);
+          if Result = 0 then Exit;
           InitLibs;
           TreeView := TTreeView.Create;
           TreeView.FHandle := AWindow;
           SetWindowLongPtr(AWindow, 0, LONG_PTR(TreeView));
-          Result := TreeView.WndProc(AMsg, AWParam, ALParam);
+          TreeView.WndProc(AMsg, AWParam, ALParam);
         end;
       WM_NCDESTROY:
         begin
           TreeView := TTreeView(GetWindowLongPtr(AWindow, 0));
-          Result := TreeView.WndProc(AMsg, AWParam, ALParam);
-          TreeView.Free;
+          if Assigned(TreeView) then
+            begin
+              TreeView.WndProc(AMsg, AWParam, ALParam);
+              TreeView.Free;
+            end;
+          Result := DefWindowProc(AWindow, AMsg, AWParam, ALParam);
         end;
     else
       TreeView := TTreeView(GetWindowLongPtr(AWindow, 0));
-      Result := TreeView.WndProc(AMsg, AWParam, ALParam);
+      if Assigned(TreeView) then
+        Result := TreeView.WndProc(AMsg, AWParam, ALParam)
+      else
+        Result := DefWindowProc(AWindow, AMsg, AWParam, ALParam);
     end;
   except
     {$IFDEF USE_LOGS}
@@ -4549,7 +5429,7 @@ begin
   if R = 1 then
     begin
       ZeroMemory(@WndClass, SizeOf(WndClass));
-      WndClass.style := CS_VREDRAW or CS_HREDRAW or CS_DBLCLKS;
+      WndClass.style := CS_DBLCLKS;
       WndClass.lpfnWndProc := @TreeViewWndProc;
       WndClass.cbWndExtra := SizeOf(TTreeView);
       WndClass.hInstance := HInstance;
@@ -4574,6 +5454,7 @@ end;
 initialization
   if ModuleIsLib then
     IsMultiThread := True;
+  InitOSVersion;
   InitializeCriticalSection(LibsCS);
   {$IFDEF DEBUG}
   FindNewTopTest;

@@ -38,7 +38,6 @@ uses
 constructor TdecTreeView.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
-  ControlStyle := ControlStyle + [csNeedsBorderPaint];
   FAlternativeView := True;
   FAutoCenter := True;
 end;
@@ -84,7 +83,7 @@ begin
               Style := Style and not WS_BORDER;
               ExStyle := AParams.ExStyle or WS_EX_CLIENTEDGE;
             end;
-          //WindowClass.style := WindowClass.style and not (CS_HREDRAW or CS_VREDRAW);
+          WindowClass.style := WindowClass.style and not (CS_HREDRAW or CS_VREDRAW);
         end;
     end
   else
@@ -98,9 +97,10 @@ begin
   inherited CreateWnd;
   if AlternativeView then
     begin
-      ExtStyle := 0;
-      if AutoCenter then ExtStyle := ExtStyle or TVS_EX_AUTOCENTER;
-      TreeView_SetExtendedStyle(Handle, ExtStyle, TVS_EX_AUTOCENTER);
+      ExtStyle := TreeView_GetExtendedStyle(Handle);
+      if AutoCenter then ExtStyle := ExtStyle or TVS_EX_AUTOCENTER
+                    else ExtStyle := ExtStyle and not TVS_EX_AUTOCENTER;
+      TreeView_SetExtendedStyle(Handle, ExtStyle, (TVS_EX_AUTOCENTER));
     end;
 end;
 
