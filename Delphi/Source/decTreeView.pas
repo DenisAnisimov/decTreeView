@@ -104,7 +104,6 @@ const
   AutoExpandStyles: array[Boolean] of DWORD = (0, TVS_SINGLEEXPAND);
   HotTrackStyles: array[Boolean] of DWORD = (0, TVS_TRACKSELECT);
   RowSelectStyles: array[Boolean] of DWORD = (0, TVS_FULLROWSELECT);
-  //CheckboxesStyles: array[Boolean] of DWORD = (0, TVS_CHECKBOXES);
 var
   GrandPa: procedure(var AParams: TCreateParams) of object;
 begin
@@ -127,8 +126,6 @@ begin
             DragStyles[DragMode] or RTLStyles[UseRightToLeftReading] or
             ToolTipStyles[ToolTips] or AutoExpandStyles[AutoExpand] or
             HotTrackStyles[HotTrack] or RowSelectStyles[RowSelect];
-          {if ExtraCheckboxesStates = [] then
-            Style := Style or CheckboxesStyles[Checkboxes];}
           if Ctl3D and NewStyleControls and (BorderStyle = bsSingle) then
             begin
               Style := Style and not WS_BORDER;
@@ -260,13 +257,17 @@ begin
     TVN_ITEMCHANGED:
       begin
         AMessage.Result := 0;
-        if CanProcessItemChange and Assigned(FOnStateIconChanging) then
+        if CanProcessItemChange then
           begin
             NMTVItemChange := PNMTVItemChange(AMessage.NMHdr);
             Node := TTreeNode(NMTVItemChange.lParam);
             if Assigned(Node) then
               if (NMTVItemChange.uStateNew and TVIS_STATEIMAGEMASK) <> (NMTVItemChange.uStateOld and TVIS_STATEIMAGEMASK) then
-                FOnStateIconChanged(Self, Node);
+                begin
+                  Node.StateIndex := (NMTVItemChange.uStateNew and TVIS_STATEIMAGEMASK) shr 12;
+                  if Assigned(FOnStateIconChanged) then
+                    FOnStateIconChanged(Self, Node);
+                end
           end;
       end;
   else

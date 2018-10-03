@@ -1,0 +1,44 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{1D710C8B-8160-49F6-A531-F5865EA14A0C}</ProjectGuid>
+  </PropertyGroup>
+  <ItemGroup />
+  <ItemGroup>
+    <Projects Include="decTreeViewR.dproj" />
+    <Projects Include="decTreeViewD.dproj" />
+  </ItemGroup>
+  <ProjectExtensions>
+    <Borland.Personality>Default.Personality</Borland.Personality>
+    <Borland.ProjectType />
+    <BorlandProject>
+  <BorlandProject xmlns=""> <Default.Personality> </Default.Personality> </BorlandProject></BorlandProject>
+  </ProjectExtensions>
+  <Target Name="decTreeViewR">
+    <MSBuild Projects="decTreeViewR.dproj" Targets="" />
+  </Target>
+  <Target Name="decTreeViewR:Clean">
+    <MSBuild Projects="decTreeViewR.dproj" Targets="Clean" />
+  </Target>
+  <Target Name="decTreeViewR:Make">
+    <MSBuild Projects="decTreeViewR.dproj" Targets="Make" />
+  </Target>
+  <Target Name="decTreeViewD">
+    <MSBuild Projects="decTreeViewD.dproj" Targets="" />
+  </Target>
+  <Target Name="decTreeViewD:Clean">
+    <MSBuild Projects="decTreeViewD.dproj" Targets="Clean" />
+  </Target>
+  <Target Name="decTreeViewD:Make">
+    <MSBuild Projects="decTreeViewD.dproj" Targets="Make" />
+  </Target>
+  <Target Name="Build">
+    <CallTarget Targets="decTreeViewR;decTreeViewD" />
+  </Target>
+  <Target Name="Clean">
+    <CallTarget Targets="decTreeViewR:Clean;decTreeViewD:Clean" />
+  </Target>
+  <Target Name="Make">
+    <CallTarget Targets="decTreeViewR:Make;decTreeViewD:Make" />
+  </Target>
+  <Import Condition="Exists('$(MSBuildBinPath)\Borland.Group.Targets')" Project="$(MSBuildBinPath)\Borland.Group.Targets" />
+</Project>

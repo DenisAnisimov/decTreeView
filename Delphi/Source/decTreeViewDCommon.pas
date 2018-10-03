@@ -24,7 +24,11 @@ uses
 {$if CompilerVersion < 17}
 {$R ..\Packages\Resources\decTreeViewIconDelphi2005.res}
 {$else}
+{$if CompilerVersion < 32}
 {$R ..\Packages\Resources\decTreeViewIconDelphi2006.res}
+{$else}
+{$R ..\Packages\Resources\decTreeViewIconDelphi10.2.res}
+{$ifend}
 {$ifend}
 {$ifend}
 

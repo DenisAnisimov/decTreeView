@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BorlandProject>
+  <PersonalityInfo>
+    <Option>
+      <Option Name="Personality">Default.Personality</Option>
+      <Option Name="ProjectType"></Option>
+      <Option Name="Version">1.0</Option>
+      <Option Name="GUID">{1D710C8B-8160-49F6-A531-F5865EA14A0C}</Option>
+    </Option>
+  </PersonalityInfo>
+  <Default.Personality>
+    <Projects>
+      <Projects Name="decTreeViewR.bpl">decTreeViewR.bdsproj</Projects>
+      <Projects Name="decTreeViewD.bpl">decTreeViewD.bdsproj</Projects>
+      <Projects Name="Targets">decTreeViewR.bpl decTreeViewD.bpl</Projects>
+    </Projects>
+    <Dependencies/>
+  </Default.Personality>
+</BorlandProject>

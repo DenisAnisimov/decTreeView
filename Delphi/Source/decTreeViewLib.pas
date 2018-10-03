@@ -1943,8 +1943,11 @@ begin
   StateIndex := IconIndex;
   NewState := FState;
   FState := PrevState;
-  NMTVStateImageChanging.iNewStateImageIndex := IconIndex;
-  TreeView.SendNotify(NM_TVSTATEIMAGECHANGING, @NMTVStateImageChanging);
+  if not TreeView.FDestroying then
+    begin
+      NMTVStateImageChanging.iNewStateImageIndex := IconIndex;
+      TreeView.SendNotify(NM_TVSTATEIMAGECHANGING, @NMTVStateImageChanging);
+    end;
   if not TreeView.SendItemChangeNofify(TVN_ITEMCHANGINGW, Self, PrevState, NewState) then
     begin
       FState := NewState;
@@ -3931,6 +3934,8 @@ var
   NextFrameTime: Cardinal;
   SleepTime: Integer;
 begin
+  if FDestroying then Exit;
+
   if not SystemParametersInfo(SPI_GETLISTBOXSMOOTHSCROLLING, 0, @EnableAnimation, 0) then
     EnableAnimation := False;
   if EnableAnimation and IsVistaOrLater then
@@ -4139,14 +4144,15 @@ begin
   if (RealCode = TVE_EXPAND) and (AItem.FState and TVIS_EXPANDEDONCE = 0) then
     ANotify := True;
 
-  if ANotify and (SendTreeViewNotify(TVN_ITEMEXPANDING, nil, AItem, ACode) <> 0) then Exit;
+  if not FDestroying and ANotify then
+    if SendTreeViewNotify(TVN_ITEMEXPANDING, nil, AItem, ACode) <> 0 then Exit;
 
   if Count = 0 then Exit;
 
 	if RealCode = TVE_EXPAND then AItem.FState := AItem.FState or TVIS_EXPANDED
                            else AItem.FState := AItem.FState and not TVIS_EXPANDED;
 
-  if ANotify then
+  if not FDestroying and ANotify then
     SendTreeViewNotify(TVN_ITEMEXPANDED, nil, AItem, ACode);
 
   AItem.FState := AItem.FState or TVIS_EXPANDEDONCE;
@@ -4254,7 +4260,8 @@ begin
       Result := False;
       if Assigned(AItem) and not AItem.ExpandParents(AAction) then Exit;
 
-      if ANotify and (SendTreeViewNotify(TVN_SELCHANGINGW, FFocusedItem, AItem, AAction) <> 0) then Exit;
+      if not FDestroying and ANotify then
+        if SendTreeViewNotify(TVN_SELCHANGINGW, FFocusedItem, AItem, AAction) <> 0 then Exit;
 
       if Assigned(FFocusedItem) then
         begin
@@ -4291,8 +4298,8 @@ begin
           InvalidateItem(AItem);
         end;
 
-      if ANotify then
-        SendTreeViewNotify(TVN_SELCHANGED, OldFocused, AItem, AAction);
+      if not FDestroying and ANotify then
+          SendTreeViewNotify(TVN_SELCHANGED, OldFocused, AItem, AAction);
 
       Result := True;
     end
@@ -5004,12 +5011,17 @@ function TTreeView.SendItemChangeNofify(ACode: Integer; AItem: TTreeViewItem; AO
 var
   NMTVItemChange: TNMTVItemChange;
 begin
-  NMTVItemChange.uChanged := TVIF_STATE;
-  NMTVItemChange.hItem := HTREEITEM(AItem);
-  NMTVItemChange.uStateNew := ANewState;
-  NMTVItemChange.uStateOld := AOldState;
-  NMTVItemChange.lParam := AItem.FParam;
-  Result := SendNotify(ACode, @NMTVItemChange) <> 0;
+  if not FDestroying then
+    begin
+      NMTVItemChange.uChanged := TVIF_STATE;
+      NMTVItemChange.hItem := HTREEITEM(AItem);
+      NMTVItemChange.uStateNew := ANewState;
+      NMTVItemChange.uStateOld := AOldState;
+      NMTVItemChange.lParam := AItem.FParam;
+      Result := SendNotify(ACode, @NMTVItemChange) <> 0;
+    end
+  else
+    Result := False;
 end;
 
 type
@@ -5286,7 +5298,7 @@ begin
                       NextTop := NextTop + Item.FHeight + ItemSpace;
                   end;
 
-                CorrectCount := 0;
+                //CorrectCount := 0;
               end;
         end;
       if CorrectCount > 0 then
@@ -6643,6 +6655,10 @@ end;
 var
   ClassAtom: ATOM;
 
+{$IFDEF BPL_MODE}
+  {$DEFINE USE_GLOBALCLASS}
+{$ENDIF}
+
 function InitTreeViewLib: ATOM;
 var
   WndClass: TWndClass;
@@ -6651,7 +6667,7 @@ begin
   if ClassAtom = 0 then
     begin
       ZeroMemory(@WndClass, SizeOf(WndClass));
-      WndClass.style := CS_DBLCLKS or CS_GLOBALCLASS;
+      WndClass.style := CS_DBLCLKS {$IFDEF USE_GLOBALCLASS}or CS_GLOBALCLASS{$ENDIF};
       WndClass.lpfnWndProc := @TreeViewWndProc;
       WndClass.cbWndExtra := SizeOf(TTreeView);
       WndClass.hInstance := HInstance;

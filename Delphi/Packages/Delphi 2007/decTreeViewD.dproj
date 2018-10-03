@@ -1,0 +1,59 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{D809F05C-8A1E-400A-B200-DD5176BBE6F6}</ProjectGuid>
+    <MainSource>decTreeViewD.dpk</MainSource>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <DCC_DCCCompiler>DCC32</DCC_DCCCompiler>
+    <DCC_DependencyCheckOutputName>..\..\BPL\Delphi 2007\decTreeViewD.bpl</DCC_DependencyCheckOutputName>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <Version>7.0</Version>
+    <DCC_DebugInformation>False</DCC_DebugInformation>
+    <DCC_LocalDebugSymbols>False</DCC_LocalDebugSymbols>
+    <DCC_SymbolReferenceInfo>0</DCC_SymbolReferenceInfo>
+    <DCC_Define>RELEASE;BPL_MODE</DCC_Define>
+    <DCC_BplOutput>..\..\BPL\Delphi 2007</DCC_BplOutput>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <Version>7.0</Version>
+    <DCC_Define>BPL_MODE</DCC_Define>
+  </PropertyGroup>
+  <ProjectExtensions>
+    <Borland.Personality>Delphi.Personality</Borland.Personality>
+    <Borland.ProjectType>Package</Borland.ProjectType>
+    <BorlandProject>
+    <BorlandProject>
+    <Delphi.Personality>
+      <Parameters>
+        <Parameters Name="UseLauncher">False</Parameters>
+        <Parameters Name="LoadAllSymbols">True</Parameters>
+        <Parameters Name="LoadUnspecifiedSymbols">False</Parameters>
+      </Parameters>
+    <Package_Options>
+      <Package_Options Name="ImplicitBuild">True</Package_Options>
+      <Package_Options Name="DesigntimeOnly">True</Package_Options>
+      <Package_Options Name="RuntimeOnly">False</Package_Options>
+      <Package_Options Name="PackageDescription">decTreeView Component</Package_Options>
+    </Package_Options>
+    <VersionInfo>
+      <VersionInfo Name="IncludeVerInfo">False</VersionInfo>
+    </VersionInfo>
+  <Source>
+    <Source Name="MainSource">decTreeViewD.dpk</Source>
+  </Source>
+  </Delphi.Personality>
+</BorlandProject></BorlandProject>
+  </ProjectExtensions>
+  <Import Project="$(MSBuildBinPath)\Borland.Delphi.Targets" />
+  <ItemGroup>
+    <DelphiCompile Include="decTreeViewD.dpk">
+      <MainSource>MainSource</MainSource>
+    </DelphiCompile>
+    <DCCReference Include="..\..\Source\decTreeView.pas" />
+    <DCCReference Include="..\..\Source\decTreeViewLib.pas" />
+    <DCCReference Include="..\..\Source\decTreeViewDCommon.pas" />
+    <DCCReference Include="rtl.dcp" />
+    <DCCReference Include="designide.dcp" />
+  </ItemGroup>
+</Project>
