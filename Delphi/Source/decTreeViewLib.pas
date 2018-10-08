@@ -40,7 +40,6 @@ Notification:
   TVN_BEGINRDRAG
   TVN_ENDLABELEDIT
   TVN_GETINFOTIP
-  TVN_KEYDOWN
   TVN_SETDISPINFO
 
 Styles:
@@ -84,12 +83,12 @@ interface
 {$ifend}
 
 uses
-  Windows, CommCtrl;
+  Windows, {$IFDEF DLL_MODE}decCommCtrl{$ELSE}CommCtrl{$ENDIF};
 
 {$IFNDEF SUPPORTS_UNICODE_STRING}
 type
   UnicodeString = WideString;
-{$endif}
+{$ENDIF}
 
 {$ALIGN ON}
 {$MINENUMSIZE 4}
@@ -99,69 +98,14 @@ const
 
 function InitTreeViewLib: ATOM; stdcall;
 
-const
-  TVS_EX_AUTOCENTER = $80000000; // Non standard
-
-const
-  TVM_SETBORDER = TV_FIRST + 35;
-  TVSBF_XBORDER = $00000001;
-  TVSBF_YBORDER = $00000002;
-
-  TVM_GETBORDER = TV_FIRST + 100; // Non standard
-
-  TVM_SETSPACE = TV_FIRST + 101; // Non standard
-  TVM_GETSPACE = TV_FIRST + 102; // Non standard
-
-function TreeView_SetBorder(AWnd: HWND; AFlags, AXBorder, AYBorder: UINT): Integer; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
-function TreeView_GetXBorder(AWnd: HWND): UINT; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
-function TreeView_GetYBorder(AWnd: HWND): UINT; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
-
-function TreeView_SetSpace(AWnd: HWND; AFlags, AXSpace, AYSpace: UINT): Integer; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
-function TreeView_GetXSpace(AWnd: HWND): UINT; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
-function TreeView_GetYSpace(AWnd: HWND): UINT; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
-
-const
-  TVN_GETITEMSIZE = TVN_FIRST - 100; // Non standard
-
 implementation
 
 uses
-  Messages {$IFDEF DEBUG}, SysUtils{$ENDIF} {$IFDEF USE_LOGS}, decShellLogs, decTreeViewLibLogs{$ENDIF},
-  Types;
+  Types, Messages, decTreeViewLibApi {$IFDEF DEBUG}, SysUtils{$ENDIF} {$IFDEF USE_LOGS}, decShellLogs, decTreeViewLibLogs{$ENDIF};
 
 {$if CompilerVersion < 23}
 {$I decTreeViewFix.inc}
 {$ifend}
-
-function TreeView_SetBorder(AWnd: HWND; AFlags, AXBorder, AYBorder: UINT): Integer;
-begin
-  Result := SendMessage(AWnd, TVM_SETBORDER, AFlags, MakeLParam(AXBorder, AYBorder));
-end;
-
-function TreeView_GetXBorder(AWnd: HWND): UINT;
-begin
-  Result := SendMessage(AWnd, TVM_GETBORDER, TVSBF_XBORDER, 0);
-end;
-
-function TreeView_GetYBorder(AWnd: HWND): UINT;
-begin
-  Result := SendMessage(AWnd, TVM_GETBORDER, TVSBF_YBORDER, 0);
-end;
-
-function TreeView_SetSpace(AWnd: HWND; AFlags, AXSpace, AYSpace: UINT): Integer;
-begin
-  Result := SendMessage(AWnd, TVM_SETSPACE, AFlags, MakeLParam(AXSpace, AYSpace));
-end;
-
-function TreeView_GetXSpace(AWnd: HWND): UINT;
-begin
-  Result := SendMessage(AWnd, TVM_GETSPACE, TVSBF_XBORDER, 0);
-end;
-
-function TreeView_GetYSpace(AWnd: HWND): UINT;
-begin
-  Result := SendMessage(AWnd, TVM_GETSPACE, TVSBF_YBORDER, 0);
-end;
 
 const
   WM_DPICHANGED              = $02E0;
@@ -253,6 +197,9 @@ const
   CBS_EXCLUDEDPRESSED    = 19;
   CBS_EXCLUDEDDISABLED   = 20;
 
+  VSCLASS_WINDOWSTYLE    = 'WINDOWSTYLE';
+  VSCLASS_WINDOW         = 'WINDOW';
+
 var
   LibsCS: TRTLCriticalSection;
   LibsInited: Boolean;
@@ -261,8 +208,6 @@ var
   User32Lib: HMODULE;
 
 type
-  HTHEME = THandle;
-
   THEMESIZE = UINT;
 
 const
@@ -923,8 +868,11 @@ type
     FTop: Integer;
     FWidth: Integer;
     FHeight: Integer;
-    FTextWidth: Integer;
-    FTextHeight: Integer;
+
+    FStateIconRect: TRect;
+    FIconRect: TRect;
+    FTextRect: TRect;
+    FButtonRect: TRect;
 
     FItems: TTreeViewItems;
 
@@ -937,12 +885,12 @@ type
     function HasButton: Boolean;
 
     function GetText: UnicodeString;
-    function GetBold: Boolean;
+    function GetBold: Boolean; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
     function GetEnabled: Boolean;
-    function GetExpanded: Boolean;
-    function GetSelected: Boolean;
+    function GetExpanded: Boolean; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+    function GetSelected: Boolean; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
     function GetHasChildren: Boolean;
-    function GetHasChildrenWithoutCallback: Integer;
+    function GetHasChildrenWithoutCallback: Integer; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
     function GetStateIndex: Integer; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
     procedure SetStateIndex(AStateIndex: Integer); {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
     function GetImageIndex: Integer;
@@ -956,10 +904,10 @@ type
     function GetRight: Integer;
     function GetBottom: Integer;
     function GetBoundsRect: TRect;
-    function GetStateIconRect: TRect;
-    function GetIconRect: TRect;
-    function GetTextRect: TRect;
-    function GetButtonRect: TRect;
+    function GetStateIconRect: TRect; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+    function GetIconRect: TRect; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+    function GetTextRect: TRect; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+    function GetButtonRect: TRect; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
 
     function GetItems: TTreeViewItems;
     function GetCount: Integer;
@@ -987,12 +935,12 @@ type
     property SelectedImageIndex: Integer read GetSelectedImageIndex;
     property ExpandedImageIndex: Integer read GetExpandedImageIndex;
 
-    property Left: Integer read GetLeft write FLeft;
-    property Top: Integer read GetTop write FTop;
+    property Left: Integer read GetLeft;
+    property Top: Integer read GetTop;
     property Right: Integer read GetRight;
     property Bottom: Integer read GetBottom;
-    property Width: Integer read FWidth write FWidth;
-    property Height: Integer read FHeight write FHeight;
+    property Width: Integer read FWidth;
+    property Height: Integer read FHeight;
     property BoundsRect: TRect read GetBoundsRect;
     property StateIconRect: TRect read GetStateIconRect;
     property IconRect: TRect read GetIconRect;
@@ -1068,7 +1016,7 @@ type
     function IsHorzScrollBarVisible: Boolean;
     function IsVertScrollBarVisible: Boolean;
     procedure UpdateScrollBarsEx(AClientWidth, AClientHeight: Integer);
-    procedure UpdateScrollBars(AMouseMove: Boolean = True);
+    procedure UpdateScrollBars(AMouseMove: Boolean);
     procedure NoScrollBarChanged;
     procedure ScrollMessage(AReason: WPARAM; ABar: DWORD);
     procedure CalcBaseOffsets(var AXOffset, AYOffset: Integer);
@@ -1099,7 +1047,8 @@ type
     procedure Paint;
     procedure PaintClient(ADC: HDC);
     procedure Invalidate;
-    procedure InvalidateItem(AItem: TTreeViewItem);
+    procedure InvalidateItem(AItem: TTreeViewItem); overload;
+    procedure InvalidateItem(AItem: TTreeViewItem; ARect: PRect); overload;
     procedure InvalidateItemCheckBox(AItem: TTreeViewItem);
     procedure InvalidateItemButton(AItem: TTreeViewItem);
     procedure InvalidateInsertMask;
@@ -1118,6 +1067,7 @@ type
     FScrollItem: TTreeViewItem;
     FHotItem: TTreeViewItem;
     FPressedItem: TTreeViewItem;
+    FPressedItemRealClick: Boolean;
     FDropItem: TTreeViewItem;
     procedure HitTest(TVHitTestInfo: PTVHitTestInfo);
     procedure MakeVisible(AItem: TTreeViewItem);
@@ -1128,7 +1078,8 @@ type
     procedure SetInsertMaskItemAfter(AInsertMaskItem: TTreeViewItem; AAfter: Boolean);
     procedure SetInsertMaskItem(AInsertMaskItem: TTreeViewItem);
     function GetInsertMaskRect: TRect;
-    procedure SetHotItem(AHotItem: TTreeViewItem);
+    procedure SetHotItem(AHotItem: TTreeViewItem; const APoint: TPoint); overload;
+    //procedure SetHotItem(AHotItem: TTreeViewItem); overload;
     procedure SetPressedItem(APressedItem: TTreeViewItem);
     procedure SetDropItem(ADropItem: TTreeViewItem);
     property InsertMaskItem: TTreeViewItem read FInsertMaskItem write SetInsertMaskItem;
@@ -1137,7 +1088,7 @@ type
     property FocusedItem: TTreeViewItem read FFocusedItem;
     property FixedItem: TTreeViewItem read FFixedItem write FFixedItem;
     property ScrollItem: TTreeViewItem read FScrollItem write FScrollItem;
-    property HotItem: TTreeViewItem read FHotItem write SetHotItem;
+    property HotItem: TTreeViewItem read FHotItem {write SetHotItem};
     property PressedItem: TTreeViewItem read FPressedItem write SetPressedItem;
     property DropItem: TTreeViewItem read FDropItem write SetDropItem;
   private
@@ -1150,19 +1101,19 @@ type
     FWheelActivity: array[Boolean] of Cardinal;
     function GetClientCursorPos: TPoint;
     procedure KeyDown(AKeyCode: DWORD; AFlags: DWORD);
-    procedure LButtonDown(APoint: TPoint);
-    procedure LButtonDblDown(APoint: TPoint);
-    procedure LButtonUp(APoint: TPoint);
-    procedure MButtonDown(APoint: TPoint);
-    procedure MButtonDblDown(APoint: TPoint);
-    procedure MButtonUp(APoint: TPoint);
-    procedure RButtonDown(APoint: TPoint);
-    procedure RButtonDblDown(APoint: TPoint);
-    procedure RButtonUp(APoint: TPoint);
+    procedure LButtonDown(const APoint: TPoint);
+    procedure LButtonDblDown(const APoint: TPoint);
+    procedure LButtonUp(const APoint: TPoint);
+    procedure MButtonDown(const APoint: TPoint);
+    procedure MButtonDblDown(const APoint: TPoint);
+    procedure MButtonUp(const APoint: TPoint);
+    procedure RButtonDown(const APoint: TPoint);
+    procedure RButtonDblDown(const APoint: TPoint);
+    procedure RButtonUp(const APoint: TPoint);
     procedure TrackMouse;
-    procedure MouseMove(APoint: TPoint);
-    procedure MouseHover(APoint: TPoint);
-    procedure MouseLeave;
+    procedure MouseMove(const APoint: TPoint);
+    procedure MouseHover(const APoint: TPoint);
+    procedure MouseLeave(const APoint: TPoint);
     procedure MouseWheel(ADelta: Integer; AVert: Boolean);
   private
     // Callback routines
@@ -1170,6 +1121,7 @@ type
     function SendNotify(ACode: Integer; ANMHdr: PNMHdr): LRESULT; overload;
     function SendTreeViewNotify(ACode: Integer; AOldItem, ANewItem: TTreeViewItem; AAction: UINT): UINT;
     function SendItemChangeNofify(ACode: Integer; AItem: TTreeViewItem; AOldState, ANewState: UINT): Boolean;
+    function SendMouseNofify(ACode: Integer; AItem: TTreeViewItem; const APoint: TPoint): Boolean; overload;
   private
     // Main routines
     FTempTextBuffer: Pointer;
@@ -1180,7 +1132,7 @@ type
     FArrowCursor: HCURSOR;
     FHandCursor: HCURSOR;
     FMoveCursor: HCURSOR;
-    procedure DoUpdate2;
+    function DoUpdate2: Boolean;
     procedure DoUpdate;
     procedure Update; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
     procedure FullUpdate; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
@@ -1208,18 +1160,20 @@ type
     FCheckBoxStateCount: Integer;
     FCheckBoxStates: array[1..5] of Integer;
     FDpi: UINT;
-    FTheme: HTHEME;
-    FDpiTheme: Boolean;
-    FCheckBoxTheme: HTHEME;
-    FDpiCheckTheme: Boolean;
-    FTreeItemThemeExist: Boolean;
-    FButtonThemeExist: Boolean;
-    FHotButtonThemeExist: Boolean;
-    FCheckBoxThemeExist: Boolean;
+    FTreeViewTheme: HTHEME;
+    FDpiTreeViewTheme: Boolean;
+    FButtonTheme: HTHEME;
+    FDpiButtonTheme: Boolean;
+    FWindowTheme: HTHEME;
+    FDpiWindowTheme: Boolean;
+    FTreeViewTreeItemThemeExist: Boolean;
+    FTreeViewGlyphThemeExist: Boolean;
+    FTreeViewHotGlyphThemeExist: Boolean;
+    FButtonCheckBoxThemeExist: Boolean;
     FCXVScroll: Integer;
     FCYHScroll: Integer;
-    FThemeButtonSize: TSize;
-    FButtonSize: TSize;
+    FThemeGlyphSize: TSize;
+    FGlyphSize: TSize;
     FThemeCheckBoxSize: TSize;
     FCheckBoxSize: TSize;
     FFont: HFONT;
@@ -1241,6 +1195,7 @@ type
     FVertBorder: Integer;
     FHorzSpace: Integer;
     FVertSpace: Integer;
+    FGroupSpace: Integer;
     FItems: TTreeViewItems;
     FTotalCount: Integer;
     FIndent: Integer; // Dummy
@@ -1263,8 +1218,8 @@ type
     procedure UpdateScrollBarSize;
     procedure UpdateButtonSize;
     procedure UpdateCheckSize;
-    function GetButtonSize: TSize;
-    function GetCheckBoxSize: TSize;
+    function GetTreeViewGlyphSize: TSize;
+    function GetButtonCheckBoxSize: TSize;
     procedure SetFont(AFont: HFONT);
     function GetBoldFont: HFONT;
     procedure UpdateColors;
@@ -1281,6 +1236,7 @@ type
     procedure SetSpaces(AHorzSpace, AVertSpace: Integer);
     procedure SetHorzSpace(AHorzSpace: Integer);
     procedure SetVertSpace(AVertSpace: Integer);
+    procedure SetGroupSpace(AGroupSpace: Integer);
     function GetItems: TTreeViewItems;
     function GetCount: Integer;
     function GetItem(AIndex: Integer): TTreeViewItem;
@@ -1295,16 +1251,19 @@ type
     property SingleExpand: Boolean read FSingleExpand;
     property TrackSelect: Boolean read FTrackSelect;
     property CheckBoxes: Boolean read FCheckBoxes;
+
     property Dpi: UINT read FDpi write SetDpi;
     property Themed: Boolean read GetThemed;
-    property Theme: HTHEME read FTheme;
-    property TreeItemThemeExist: Boolean read FTreeItemThemeExist;
-    property ButtonThemeExist: Boolean read FButtonThemeExist;
-    property HotButtonThemeExist: Boolean read FHotButtonThemeExist;
-    property ButtonSize: TSize read GetButtonSize;
-    property CheckBoxTheme: HTHEME read FCheckBoxTheme;
-    property CheckBoxThemeExist: Boolean read FCheckBoxThemeExist;
-    property CheckBoxSize: TSize read GetCheckBoxSize;
+    property TreeViewTheme: HTHEME read FTreeViewTheme;
+    property TreeViewTreeItemThemeExist: Boolean read FTreeViewTreeItemThemeExist;
+    property TreeViewGlyphThemeExist: Boolean read FTreeViewGlyphThemeExist;
+    property TreeViewHotGlyphThemeExist: Boolean read FTreeViewHotGlyphThemeExist;
+    property TreeViewGlyphSize: TSize read GetTreeViewGlyphSize;
+    property ButtonTheme: HTHEME read FButtonTheme;
+    property ButtonCheckBoxThemeExist: Boolean read FButtonCheckBoxThemeExist;
+    property ButtonCheckBoxSize: TSize read GetButtonCheckBoxSize;
+    property WindowTheme: HTHEME read FWindowTheme;
+
     property Font: HFONT read FFont write SetFont;
     property BoldFont: HFONT read GetBoldFont;
     property Color: TColorRef read FColor write SetColor;
@@ -1319,6 +1278,7 @@ type
     property VertBorder: Integer read FVertBorder write SetVertBorder;
     property HorzSpace: Integer read FHorzSpace write SetHorzSpace;
     property VertSpace: Integer read FVertSpace write SetVertSpace;
+    property GroupSpace: Integer read FGroupSpace write SetGroupSpace;
     property Items_: TTreeViewItems read GetItems;
     property Count: Integer read GetCount;
     property Items[AIndex: Integer]: TTreeViewItem read GetItem;
@@ -1511,15 +1471,16 @@ procedure TTreeViewItem.AssignW(AItem: PTVItemExW);
 var
   NeedUpdate: Boolean;
   NeedInvalidate: Boolean;
+  NewText: UnicodeString;
   PrevHasChildren: Integer;
   PrevBold: Boolean;
   PrevEnabled: Boolean;
   PrevExpanded: Boolean;
   PrevSelected: Boolean;
   PrevOverlayIndex: Integer;
-  PrevStateIconIndex: Integer;
+  PrevHasStateIcon: Boolean;
   NewOverlayIndex: Integer;
-  NewStateIconIndex: Integer;
+  NewHasStateIcon: Boolean;
   PrevState: UINT;
   NewState: UINT;
 begin
@@ -1532,13 +1493,16 @@ begin
         begin
           FTextCallback := True;
           FText := '';
+          NeedUpdate := True;
         end
       else
         begin
+          NewText := AItem.pszText;
+          if FTextCallback or (NewText <> FText) then
+            NeedUpdate := True;
           FTextCallback := False;
-          FText := AItem.pszText;
+          FText := NewText;
         end;
-      NeedUpdate := True;
     end;
 
   if AItem.mask and TVIF_IMAGE <> 0 then
@@ -1581,38 +1545,25 @@ begin
       else
         FKids := kForceYes;
       end;
-      if GetHasChildrenWithoutCallback <> PrevHasChildren then
-        NeedUpdate := True;
+      if TreeView.HasButtons then
+        if GetHasChildrenWithoutCallback <> PrevHasChildren then
+          NeedUpdate := True
     end;
-
-  PrevBold := Bold;
-  PrevExpanded := Expanded;
-  PrevSelected := Selected;
-  PrevOverlayIndex := FState and TVIS_OVERLAYMASK;
-  PrevStateIconIndex := FState and TVIS_STATEIMAGEMASK;
 
   if (AItem.cChildren = I_CHILDRENCALLBACK) and (Count = 0) then
     FState := FState and not (TVIS_EXPANDEDONCE or TVIS_EXPANDED);
-
-  NewOverlayIndex := FState and TVIS_OVERLAYMASK;
-  if NewOverlayIndex <> PrevOverlayIndex then
-    if (NewOverlayIndex = 0) or (PrevOverlayIndex = 0) then
-      NeedUpdate := True
-    else
-      NeedInvalidate := True;
-
-  NewStateIconIndex := FState and TVIS_STATEIMAGEMASK;
-  if NewStateIconIndex <> PrevStateIconIndex then
-    if (NewStateIconIndex = 0) or (PrevStateIconIndex = 0) then
-      NeedUpdate := True
-    else
-      NeedInvalidate := True;
 
   PrevEnabled := Enabled;
   if AItem.mask and TVIF_STATEEX <> 0 then
     FStateEx := AItem.uStateEx;
   if Enabled <> PrevEnabled then
     NeedInvalidate := True;
+
+  PrevBold := Bold;
+  PrevExpanded := Expanded;
+  PrevSelected := Selected;
+  PrevOverlayIndex := FState and TVIS_OVERLAYMASK;
+  PrevHasStateIcon := HasStateIcon;
 
   if AItem.mask and TVIF_STATE <> 0 then
     begin
@@ -1638,9 +1589,23 @@ begin
             if Bold <> PrevBold then
               NeedUpdate := True;
             if Expanded <> PrevExpanded then
-              NeedUpdate := True;
+              NeedInvalidate := True;
             if Selected <> PrevSelected then
               NeedInvalidate := True;
+
+            NewOverlayIndex := FState and TVIS_OVERLAYMASK;
+            if NewOverlayIndex <> PrevOverlayIndex then
+              {if (NewOverlayIndex = 0) or (PrevOverlayIndex = 0) then
+                NeedUpdate := True
+              else}
+                NeedInvalidate := True;
+
+            NewHasStateIcon := HasStateIcon;
+            if NewHasStateIcon <> PrevHasStateIcon then
+              if (not NewHasStateIcon) or (not PrevHasStateIcon) then
+                NeedUpdate := True
+              else
+                NeedInvalidate := True;
 
             FTreeView.SendItemChangeNofify(TVN_ITEMCHANGEDW, Self, PrevState, NewState);
           end;
@@ -1822,69 +1787,96 @@ begin
     end;
 end;
 
+procedure CenterRect(AHeight: Integer; var ARect: TRect); {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+begin
+  OffsetRect(ARect, 0, (AHeight - ARect.Bottom) div 2);
+end;
+
 procedure TTreeViewItem.UpdateSize(ADC: HDC);
 var
+  Size: TSize;
   S: UnicodeString;
-  R: TRect;
   SaveFont: HFONT;
   ItemIndex: Integer;
-  ButtonSize: TSize;
-  NMTVCustomDraw: TNMTVCustomDraw;
+  ItemSize: TNMTVGETITEMSIZE;
 begin
   if FNeedUpdateSize then
     begin
-      FWidth := 0;
+      ZeroMemory(@ItemSize, SizeOf(ItemSize));
+
+      FWidth := 1 + FTreeView.HorzBorder;
       FHeight := 0;
-
-      S := Text;
-      R.Left := 0;
-      R.Top := 0;
-      R.Right := 0;
-      R.Bottom := 0;
-
-      if Bold then SaveFont := SelectObject(ADC, TreeView.BoldFont)
-              else SaveFont := SelectObject(ADC, TreeView.Font);
-      DrawTextExW(ADC, PWideChar(S), Length(S), R, DT_CALCRECT or DT_LEFT or DT_NOPREFIX, nil);
-      SelectObject(ADC, SaveFont);
-      FTextWidth := R.Right - R.Left;
-      FTextHeight := R.Bottom - R.Top;
-
-      Inc(FWidth, FTextWidth);
-      Inc(FHeight, FTextHeight);
 
       if HasStateIcon then
         begin
-          Inc(FWidth, TreeView.StateImageListIconSize.cx + FTreeView.HorzBorder);
-          FHeight := Max(FHeight, TreeView.StateImageListIconSize.cy);
+          Size := TreeView.StateImageListIconSize;
+          ItemSize.StateImageRect.Left := FWidth;
+          ItemSize.StateImageRect.Right := FWidth + Size.cx;
+          ItemSize.StateImageRect.Bottom := Size.cy;
+          FWidth := ItemSize.StateImageRect.Right + FTreeView.HorzBorder;
+          FHeight := Max(FHeight, Size.cy);
         end;
 
       if HasIcon then
         begin
-          Inc(FWidth, TreeView.ImageListIconSize.cx + FTreeView.HorzBorder);
-          FHeight := Max(FHeight, TreeView.ImageListIconSize.cy);
+          Size := TreeView.ImageListIconSize;
+          ItemSize.ImageRect.Left := FWidth;
+          ItemSize.ImageRect.Right := FWidth + Size.cx;
+          ItemSize.ImageRect.Bottom := Size.cy;
+          FWidth := ItemSize.ImageRect.Right + FTreeView.HorzBorder;
+          FHeight := Max(FHeight, Size.cy);
+        end;
+
+      S := Text;
+      if S <> '' then
+        begin
+          ItemSize.TextRect.Left := FWidth;
+          ItemSize.TextRect.Right := FWidth;
+          if Bold then SaveFont := SelectObject(ADC, TreeView.BoldFont)
+                  else SaveFont := SelectObject(ADC, TreeView.Font);
+          DrawTextExW(ADC, PWideChar(S), Length(S), ItemSize.TextRect, DT_CALCRECT or DT_LEFT or DT_NOPREFIX, nil);
+          SelectObject(ADC, SaveFont);
+          FWidth := ItemSize.TextRect.Right + FTreeView.HorzBorder;
+          FHeight := Max(FHeight, ItemSize.TextRect.Bottom);
         end;
 
       if HasButton then
         begin
-          ButtonSize := TreeView.ButtonSize;
-          Inc(FWidth, FTreeView.HorzBorder + ButtonSize.cx);
-          FHeight := Max(FHeight, ButtonSize.cy);
+          Size := TreeView.TreeViewGlyphSize;
+          ItemSize.ButtonRect.Left := FWidth;
+          ItemSize.ButtonRect.Right := FWidth + Size.cx;
+          ItemSize.ButtonRect.Bottom := Size.cy;
+          FWidth := ItemSize.ButtonRect.Right + FTreeView.HorzBorder;
+          FHeight := Max(FHeight, Size.cy);
         end;
 
-      Inc(FWidth, FTreeView.HorzBorder * 2 + 2);
-      Inc(FHeight, FTreeView.VertBorder * 2 + 2);
+      Inc(FWidth, 1);
+      Inc(FHeight, 2 + TreeView.VertBorder * 2);
+      CenterRect(FHeight, ItemSize.StateImageRect);
+      CenterRect(FHeight, ItemSize.ImageRect);
+      CenterRect(FHeight, ItemSize.TextRect);
+      CenterRect(FHeight, ItemSize.ButtonRect);
 
-      ZeroMemory(@NMTVCustomDraw, SizeOf(NMTVCustomDraw));
-      NMTVCustomDraw.nmcd.hdc := ADC;
-      NMTVCustomDraw.nmcd.rc.Right := FWidth;
-      NMTVCustomDraw.nmcd.rc.Bottom := FHeight;
-      NMTVCustomDraw.nmcd.dwItemSpec := {$IFDEF WIN64}DWORD_PTR(Self){$ELSE}DWORD(Self){$ENDIF};
-      NMTVCustomDraw.nmcd.lItemlParam := FParam;
-      NMTVCustomDraw.iLevel := Level;
-      if FTreeView.SendNotify(TVN_GETITEMSIZE, @NMTVCustomDraw) <> 0 then
+      FStateIconRect := ItemSize.StateImageRect;
+      FIconRect := ItemSize.ImageRect;
+      FTextRect := ItemSize.TextRect;
+      FButtonRect := ItemSize.ButtonRect;
+
+      ItemSize.nmcd.hdc := ADC;
+      ItemSize.nmcd.rc.Right := FWidth;
+      ItemSize.nmcd.rc.Bottom := FHeight;
+      ItemSize.nmcd.dwItemSpec := {$IFDEF WIN64}DWORD_PTR(Self){$ELSE}DWORD(Self){$ENDIF};
+      ItemSize.nmcd.lItemlParam := FParam;
+      ItemSize.iLevel := Level;
+      if FTreeView.SendNotify(TVN_GETITEMSIZE, @ItemSize) <> 0 then
         begin
-          FWidth := NMTVCustomDraw.nmcd.rc.Right;
-          FHeight := NMTVCustomDraw.nmcd.rc.Bottom;
+          FWidth := ItemSize.nmcd.rc.Right;
+          FHeight := ItemSize.nmcd.rc.Bottom;
+
+          FStateIconRect := ItemSize.StateImageRect;
+          FIconRect := ItemSize.ImageRect;
+          FTextRect := ItemSize.TextRect;
+          FButtonRect := ItemSize.ButtonRect;
         end;
 
       FNeedUpdateSize := False;
@@ -1952,12 +1944,13 @@ begin
     begin
       FState := NewState;
       TreeView.SendItemChangeNofify(TVN_ITEMCHANGEDW, Self, PrevState, NewState);
-      Invalidate;
       if StateIndex = 0 then
         begin
           NeedUpdateSize;
           TreeView.Update;
-        end;
+        end
+      else
+        Invalidate;
     end;
 end;
 
@@ -2094,7 +2087,7 @@ var
   BackgroudBrush: HBRUSH;
 begin
   AFontColor := TreeView.TextColor;
-  if TreeView.Themed and TreeView.TreeItemThemeExist then
+  if TreeView.Themed and TreeView.TreeViewTreeItemThemeExist then
     begin
       FillRect(ADC, ARect, AGdiCache.ColorBrush);
 
@@ -2105,7 +2098,7 @@ begin
       if not Enabled then
         begin
           StateID := TREIS_DISABLED;
-          GetThemeColor(TreeView.Theme, TVP_TREEITEM, TREIS_DISABLED, 3803 {TMT_TEXTCOLOR}, AFontColor);
+          GetThemeColor(TreeView.TreeViewTheme, TVP_TREEITEM, TREIS_DISABLED, 3803 {TMT_TEXTCOLOR}, AFontColor);
         end
       else
         if Selected then
@@ -2116,12 +2109,12 @@ begin
               if TreeView.AlwaysShowSelection then
                 begin
                   StateID := TREIS_SELECTED;
-                  if IsThemePartDefined(TreeView.Theme, TVP_TREEITEM, TREIS_SELECTEDNOTFOCUS) then
+                  if IsThemePartDefined(TreeView.TreeViewTheme, TVP_TREEITEM, TREIS_SELECTEDNOTFOCUS) then
                     StateID := TREIS_SELECTEDNOTFOCUS;
                 end;
           end;
       if StateID <> TREIS_NORMAL then
-        DrawThemeBackground(TreeView.Theme, ADC, TVP_TREEITEM, StateID, ARect, nil);
+        DrawThemeBackground(TreeView.TreeViewTheme, ADC, TVP_TREEITEM, StateID, ARect, nil);
     end
   else
     begin
@@ -2170,7 +2163,7 @@ begin
       {$ENDIF}
       StateId := TreeView.FCheckBoxStates[IconIndex];
       NeedPaintExclude := False;
-      if TreeView.CheckBoxThemeExist then
+      if TreeView.ButtonCheckBoxThemeExist then
         begin
           if not IsVistaOrLater then
             case StateId of
@@ -2187,7 +2180,7 @@ begin
           else
             if HotCheckBox then
               Inc(StateId, 1);
-          DrawThemeBackground(TreeView.CheckBoxTheme, ADC, BP_CHECKBOX, StateId, ARect, nil)
+          DrawThemeBackground(TreeView.ButtonTheme, ADC, BP_CHECKBOX, StateId, ARect, nil)
         end
       else
         begin
@@ -2260,13 +2253,13 @@ var
   X, Y: Integer;
 begin
   if HasButton then
-    if TreeView.Themed and TreeView.ButtonThemeExist then
+    if TreeView.Themed and TreeView.TreeViewGlyphThemeExist then
       begin
-        if HotButton and TreeView.HotButtonThemeExist then PartID := TVP_HOTGLYPH
-                                                      else PartID := TVP_GLYPH;
+        if HotButton and TreeView.TreeViewHotGlyphThemeExist then PartID := TVP_HOTGLYPH
+                                                             else PartID := TVP_GLYPH;
         if Expanded then StateID := GLPS_OPENED
                     else StateID := GLPS_CLOSED;
-        DrawThemeBackground(TreeView.Theme, ADC, PartID, StateID, ARect, nil);
+        DrawThemeBackground(TreeView.TreeViewTheme, ADC, PartID, StateID, ARect, nil);
       end
     else
       begin
@@ -2314,8 +2307,8 @@ begin
 
       if FTreeView.FPaintRequest and CDRF_NOTIFYITEMDRAW <> 0 then
         begin
-          NMTVCustomDraw.nmcd.rc := BoundsRect;
-          OffsetRect(NMTVCustomDraw.nmcd.rc, -AXOffset, -AYOffset);
+          NMTVCustomDraw.nmcd.rc := ItemRect;
+          OffsetRect(NMTVCustomDraw.nmcd.rc, AXOffset, AYOffset);
           NMTVCustomDraw.nmcd.dwItemSpec := {$IFDEF WIN64}DWORD_PTR(Self){$ELSE}DWORD(Self){$ENDIF};
           if Selected then
             NMTVCustomDraw.nmcd.uItemState := NMTVCustomDraw.nmcd.uItemState or CDIS_SELECTED;
@@ -2327,6 +2320,8 @@ begin
             NMTVCustomDraw.nmcd.uItemState := NMTVCustomDraw.nmcd.uItemState or CDIS_HOT;
           if not Enabled then
             NMTVCustomDraw.nmcd.uItemState := NMTVCustomDraw.nmcd.uItemState or CDIS_GRAYED;
+          if TreeView.PressedItem = Self then
+            NMTVCustomDraw.nmcd.uItemState := NMTVCustomDraw.nmcd.uItemState or CDIS_MARKED;
           NMTVCustomDraw.nmcd.lItemlParam := FParam;
           NMTVCustomDraw.iLevel := Level;
           PaintRequest := FTreeView.SendDrawNotify(ADC, CDDS_ITEMPREPAINT, NMTVCustomDraw);
@@ -2369,12 +2364,12 @@ begin
 
           {$IFDEF DEBUG}
           {if HasStateIcon then
-            FrameRectWithColor(ADC, StateIconRect, $00FF00);
+            FrameRectWithColor(ADC, StateIconRect, $FF);
           if HasIcon then
-            FrameRectWithColor(ADC, IconRect, $00FF00);
-          FrameRectWithColor(ADC, GetTextRect, $00FF00);
+            FrameRectWithColor(ADC, IconRect, $FF);
+          FrameRectWithColor(ADC, TextRect, $FF);
           if HasButton then
-            FrameRectWithColor(ADC, ButtonRect, $00FF00);{}
+            FrameRectWithColor(ADC, ButtonRect, $FF);{}
           {$ENDIF}
 
           if PaintRequest and CDRF_NOTIFYPOSTPAINT <> 0 then
@@ -2401,9 +2396,9 @@ var
 begin
   NewHotButton := False;
   NewHotCheckBox := False;
-  if HasButton and TreeView.Themed and TreeView.HotButtonThemeExist then
+  if HasButton and TreeView.Themed and TreeView.TreeViewHotGlyphThemeExist then
     NewHotButton := PtInRect(ButtonRect, APoint);
-  if HasStateIcon and TreeView.CheckBoxes and (TreeView.StateImageList = 0) and TreeView.CheckBoxThemeExist then
+  if HasStateIcon and TreeView.CheckBoxes and (TreeView.StateImageList = 0) and TreeView.ButtonCheckBoxThemeExist then
     NewHotCheckBox := PtInRect(StateIconRect, APoint);
   HotButton := NewHotButton;
   HotCheckBox := NewHotCheckBox;
@@ -2628,46 +2623,26 @@ end;
 
 function TTreeViewItem.GetStateIconRect: TRect;
 begin
-  Result.Left := 0;
-  Result.Top := 0;
-  Result.Right := TreeView.StateImageListIconSize.cx;
-  Result.Bottom := TreeView.StateImageListIconSize.cy;
-  OffsetRect(Result, Left + FTreeView.HorzBorder + 1, Top + (FHeight - Result.Bottom) div 2);
+  Result := FStateIconRect;
+  OffsetRect(Result, Left, Top);
 end;
 
 function TTreeViewItem.GetIconRect: TRect;
 begin
-  Result.Left := 0;
-  Result.Top := 0;
-  Result.Right := TreeView.ImageListIconSize.cx;
-  Result.Bottom := TreeView.ImageListIconSize.cy;
-  OffsetRect(Result, Left + FTreeView.HorzBorder + 1, Top + (FHeight - Result.Bottom) div 2);
-  if HasStateIcon then
-    OffsetRect(Result, TreeView.StateImageListIconSize.cx + FTreeView.HorzBorder, 0);
+  Result := FIconRect;
+  OffsetRect(Result, Left, Top);
 end;
 
 function TTreeViewItem.GetTextRect: TRect;
 begin
-  Result.Left := Left + FTreeView.HorzBorder + 1;
-  Result.Top := Top + (Height - FTextHeight) div 2;
-  Result.Right := Result.Left + FTextWidth;
-  Result.Bottom := Result.Top + FTextHeight;
-  if HasStateIcon then
-    OffsetRect(Result, TreeView.StateImageListIconSize.cx + FTreeView.HorzBorder, 0);
-  if HasIcon then
-    OffsetRect(Result, TreeView.ImageListIconSize.cx + FTreeView.HorzBorder, 0);
+  Result := FTextRect;
+  OffsetRect(Result, Left, Top)
 end;
 
 function TTreeViewItem.GetButtonRect: TRect;
 begin
-  Result.Left := 0;
-  Result.Top := 0;
-  with TreeView.ButtonSize do
-    begin
-      Result.Right := cx;
-      Result.Bottom := cy;
-    end;
-  OffsetRect(Result, Right - Result.Right - FTreeView.HorzBorder, Top + (Bottom - Top - Result.Bottom) div 2);
+  Result := FButtonRect;
+  OffsetRect(Result, Left, Top)
 end;
 
 function TTreeViewItem.GetItems: TTreeViewItems;
@@ -2987,6 +2962,7 @@ begin
   FHorzBorder := 3;
   FVertSpace := 10;
   FHorzSpace := 30;
+  FGroupSpace := 3;
   FIndent := 19;
   FItemHeight := 19;
 end;
@@ -3015,7 +2991,7 @@ var
   SW: Integer;
 begin
   if HasBorder then
-    GetThemeBackgroundContentRect(Theme, 0, 0, 0, ARect^, AClientRect)
+    GetThemeBackgroundContentRect(TreeViewTheme, 0, 0, 0, ARect^, AClientRect)
   else
     AClientRect^ := ARect^;
   if not NoScroll then
@@ -3055,7 +3031,7 @@ begin
                                else ClipRgn2 := AClipRgn;
 
       {$IFDEF NATIVE_BORDERS}
-      GetThemeBackgroundContentRect(Theme, 0, 0, 0, WindowRect, @ClientRect);
+      GetThemeBackgroundContentRect(TreeViewTheme, 0, 0, 0, WindowRect, @ClientRect);
       {$ELSE}
       HozEdge := GetSystemMetrics(SM_CXEDGE);
       VertEdge := GetSystemMetrics(SM_CYEDGE);
@@ -3080,9 +3056,9 @@ begin
       with ClientRect do
         ExcludeClipRect(DC, Left, Top, Right, Bottom);
 
-      if IsThemeBackgroundPartiallyTransparent(FTheme, 0, 0) then
+      if IsThemeBackgroundPartiallyTransparent(TreeViewTheme, 0, 0) then
         DrawThemeParentBackground(FHandle, DC, @WindowRect);
-      DrawThemeBackground(Theme, DC, 0, 0, WindowRect, nil);
+      DrawThemeBackground(TreeViewTheme, DC, 0, 0, WindowRect, nil);
       //FillRectWithColor(DC, rect, $FF);
       ReleaseDC(FHandle, DC);
 
@@ -3364,7 +3340,7 @@ begin
   end;
 end;
 
-procedure TTreeView.UpdateScrollBars(AMouseMove: Boolean = True);
+procedure TTreeView.UpdateScrollBars(AMouseMove: Boolean);
 var
   ClientRect: TRect;
   ClientWidth, ClientHeight: integer;
@@ -3403,7 +3379,7 @@ begin
         Windows.SetScrollInfo(FHandle, SB_VERT, ScrollInfo, True);
       end;
 
-    UpdateScrollBars;
+    UpdateScrollBars(False);
     SetScrollPos(SB_HORZ, XPos);
     SetScrollPos(SB_VERT, YPos);
 
@@ -3858,6 +3834,25 @@ begin
   InvalidateRect(FHandle, @ItemRect, False);
 end;
 
+procedure TTreeView.InvalidateItem(AItem: TTreeViewItem; ARect: PRect);
+var
+  ItemRect: TRect;
+  PartRect: TRect;
+begin
+  if Assigned(ARect) then
+    begin
+      if FDestroying then Exit;
+      if not AItem.IsVisible then Exit;
+      ItemRect := AItem.BoundsRect;
+      OffsetItemRect(ItemRect);
+      PartRect := ARect^;
+      OffsetRect(PartRect, ItemRect.Left, ItemRect.Top);
+      InvalidateRect(FHandle, @PartRect, False);
+    end
+  else
+    InvalidateItem(AItem);
+end;
+
 procedure TTreeView.InvalidateItemCheckBox(AItem: TTreeViewItem);
 var
   ItemRect: TRect;
@@ -4299,7 +4294,7 @@ begin
         end;
 
       if not FDestroying and ANotify then
-          SendTreeViewNotify(TVN_SELCHANGED, OldFocused, AItem, AAction);
+        SendTreeViewNotify(TVN_SELCHANGED, OldFocused, AItem, AAction);
 
       Result := True;
     end
@@ -4354,7 +4349,7 @@ begin
     end;
 end;
 
-procedure TTreeView.SetHotItem(AHotItem: TTreeViewItem);
+procedure TTreeView.SetHotItem(AHotItem: TTreeViewItem; const APoint: TPoint);
 begin
   if FHotItem = AHotItem then Exit;
   if Assigned(FHotItem) then
@@ -4362,12 +4357,21 @@ begin
       FHotItem.MouseLeave;
       if TrackSelect then
         InvalidateItem(FHotItem);
+      SendMouseNofify(TVN_ITEMMOUSELEAVE, FHotItem, APoint);
     end;
   FHotItem := AHotItem;
   if Assigned(FHotItem) then
-    if TrackSelect then
-      InvalidateItem(FHotItem);
+    begin
+      if TrackSelect then
+        InvalidateItem(FHotItem);
+      SendMouseNofify(TVN_ITEMMOUSEENTER, FHotItem, APoint);
+    end;
 end;
+
+{procedure TTreeView.SetHotItem(AHotItem: TTreeViewItem);
+begin
+  SetHotItem(AHotItem, GetClientCursorPos);
+end;}
 
 procedure TTreeView.SetPressedItem(APressedItem: TTreeViewItem);
 begin
@@ -4403,7 +4407,13 @@ begin
 
   case AKeyCode of
     VK_RETURN:
-      SendNotify(NM_RETURN, nil);
+      begin
+        SendNotify(NM_RETURN, nil);
+        if Assigned(FocusedItem) then
+          begin
+            SendMouseNofify(TVN_ITEMCLICK, FocusedItem, Point(FocusedItem.Left, FocusedItem.Top));
+          end
+      end;
     VK_SPACE:
       if CheckBoxes and Assigned(FocusedItem) then
         FocusedItem.SelectNextCheckState;
@@ -4497,7 +4507,7 @@ begin
   end;
 end;
 
-procedure TTreeView.LButtonDown(APoint: TPoint);
+procedure TTreeView.LButtonDown(const APoint: TPoint);
 var
   CtrlPressed: Boolean;
   Item: TTreeViewItem;
@@ -4510,6 +4520,7 @@ begin
   OffsetMousePoint(ItemPoint);
   Item := FItems.ItemAtPos(ItemPoint);
   PressedItem := Item;
+  FPressedItemRealClick := True;
   if Assigned(Item) then
     begin
       CtrlPressed := GetKeyState(VK_CONTROL) < 0;
@@ -4520,14 +4531,22 @@ begin
               Item.SelectNextCheckState;
               if Item.StateIndex <> 0 then
                 Item.PressCheckBox := True;
+              FPressedItemRealClick := False;
             end
           else
-            SelectItem(Item, True, TVC_BYMOUSE, CtrlPressed);
+            begin
+              SelectItem(Item, True, TVC_BYMOUSE, CtrlPressed);
+              SendMouseNofify(TVN_ITEMLMOUSEDOWN, Item, ItemPoint);
+            end;
         TVHT_ONITEMBUTTON:
-          ExpandItem(Item, TVE_TOGGLE, TVC_BYMOUSE, True);
+          begin
+            ExpandItem(Item, TVE_TOGGLE, TVC_BYMOUSE, True);
+            FPressedItemRealClick := False;
+          end;
       else
         SelectItem(Item, True, TVC_BYMOUSE, CtrlPressed);
-      end
+        SendMouseNofify(TVN_ITEMLMOUSEDOWN, Item, ItemPoint);
+      end;
     end
   else
     if IsHorzScrollBarVisible or IsVertScrollBarVisible then
@@ -4543,45 +4562,59 @@ begin
       end;
 end;
 
-procedure TTreeView.LButtonDblDown(APoint: TPoint);
+procedure TTreeView.LButtonDblDown(const APoint: TPoint);
 begin
   if SendNotify(NM_DBLCLK, nil) <> 0 then Exit;
 end;
 
-procedure TTreeView.LButtonUp(APoint: TPoint);
+procedure TTreeView.LButtonUp(const APoint: TPoint);
+var
+  ItemPoint: TPoint;
 begin
   ReleaseCapture;
   FMoveMode := False;
-  PressedItem := nil;
+  if Assigned(PressedItem) then
+    begin
+      ItemPoint := APoint;
+      OffsetMousePoint(ItemPoint);
+      if FPressedItemRealClick and PtInRect(PressedItem.BoundsRect, ItemPoint) then
+        SendMouseNofify(TVN_ITEMCLICK, PressedItem, ItemPoint);
+      // TVN_ITEMCLICK handler can delete PressedItem
+      if Assigned(PressedItem) then
+        begin
+          SendMouseNofify(TVN_ITEMLMOUSEUP, PressedItem, ItemPoint);
+          PressedItem := nil;
+        end;
+    end;
 end;
 
-procedure TTreeView.MButtonDown(APoint: TPoint);
+procedure TTreeView.MButtonDown(const APoint: TPoint);
 begin
   SetFocus(FHandle);
 end;
 
-procedure TTreeView.MButtonDblDown(APoint: TPoint);
+procedure TTreeView.MButtonDblDown(const APoint: TPoint);
 begin
 
 end;
 
-procedure TTreeView.MButtonUp(APoint: TPoint);
+procedure TTreeView.MButtonUp(const APoint: TPoint);
 begin
 
 end;
 
-procedure TTreeView.RButtonDown(APoint: TPoint);
+procedure TTreeView.RButtonDown(const APoint: TPoint);
 begin
   SetFocus(FHandle);
   if SendNotify(NM_RCLICK, nil) <> 0 then Exit;
 end;
 
-procedure TTreeView.RButtonDblDown(APoint: TPoint);
+procedure TTreeView.RButtonDblDown(const APoint: TPoint);
 begin
   if SendNotify(NM_RDBLCLK, nil) <> 0 then Exit;
 end;
 
-procedure TTreeView.RButtonUp(APoint: TPoint);
+procedure TTreeView.RButtonUp(const APoint: TPoint);
 begin
 
 end;
@@ -4599,11 +4632,12 @@ begin
   TrackMouseEvent(EventTrack);
 end;
 
-procedure TTreeView.MouseMove(APoint: TPoint);
+procedure TTreeView.MouseMove(const APoint: TPoint);
 var
   XOffset, YOffset: Integer;
   ScrollInfo: TScrollInfo;
   Item: TTreeViewItem;
+  ItemPoint: TPoint;
 begin
   TrackMouse;
 
@@ -4644,24 +4678,39 @@ begin
   else
     begin
       if Count = 0 then Exit;
-      OffsetMousePoint(APoint);
-      Item := Items_.ItemAtPos(APoint);
-      HotItem := Item;
+      ItemPoint := APoint;
+      OffsetMousePoint(ItemPoint);
+      Item := Items_.ItemAtPos(ItemPoint);
+      if Assigned(PressedItem) then
+        if Item <> PressedItem then
+          Item := nil;
+      SetHotItem(Item, ItemPoint);
+      if not Assigned(Item) then
+        Item := PressedItem;
       if Assigned(Item) then
-        Item.MouseMove(APoint);
+        begin
+          Item.MouseMove(ItemPoint);
+          SendMouseNofify(TVN_ITEMMOUSEMOVE, Item, ItemPoint);
+        end;
     end;
 end;
 
-procedure TTreeView.MouseHover(APoint: TPoint);
+procedure TTreeView.MouseHover(const APoint: TPoint);
 begin
   TrackMouse;
 end;
 
-procedure TTreeView.MouseLeave;
+procedure TTreeView.MouseLeave(const APoint: TPoint);
+var
+  ItemPoint: TPoint;
 begin
   FTrackMouse := False;
   if not FMoveMode then
-    HotItem := nil;
+    begin
+      ItemPoint := APoint;
+      OffsetMousePoint(ItemPoint);
+      SetHotItem(nil, ItemPoint);
+    end;
 end;
 
 procedure TTreeView.MouseWheel(ADelta: Integer; AVert: Boolean);
@@ -5024,6 +5073,23 @@ begin
     Result := False;
 end;
 
+function TTreeView.SendMouseNofify(ACode: Integer; AItem: TTreeViewItem; const APoint: TPoint): Boolean;
+var
+  NMMouse: TNMMouse;
+begin
+  ZeroMemory(@NMMouse, SizeOf(NMMouse));
+  NMMouse.pt := APoint;
+  NMMouse.dwHitInfo := 0;
+  if Assigned(AItem) then
+    begin
+      NMMouse.pt.X := NMMouse.pt.X - AItem.Left;
+      NMMouse.pt.Y := NMMouse.pt.Y - AItem.Top;
+      NMMouse.dwItemSpec := {$IFDEF WIN64}DWORD_PTR(AItem){$ELSE}DWORD(AItem){$ENDIF};
+      NMMouse.dwItemData := AItem.FParam;
+    end;
+  Result := SendNotify(ACode, @NMMouse) <> 0;
+end;
+
 type
   TRegions = class(TObject)
   public
@@ -5129,17 +5195,17 @@ begin
 end;
 {$ENDIF}
 
-function GetBoundsRectEx(AItem: TTreeViewItem; AHorzSpace, AVertSpace: Integer): TRect; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+function GetBoundsRectEx(AItem: TTreeViewItem; AHorzSpace, AVertSpace, AGroupSpace: Integer): TRect; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
 begin
   Result.Left := AItem.FLeft;
   Result.Top := AItem.FTop;
   Result.Right := AItem.FLeft + AItem.FWidth + AHorzSpace;
   Result.Bottom := AItem.FTop + AItem.FHeight + AVertSpace;
   if AItem.FIndex = AItem.ParentItems.Count - 1 then
-    Inc(Result.Bottom, AVertSpace);
+    Inc(Result.Bottom, AGroupSpace);
 end;
 
-procedure CreateChildsRegion(AItem: TTreeViewItem; ARgn: HRGN; AHorzSpace, AVertSpace: Integer);
+procedure CreateChildsRegion(AItem: TTreeViewItem; ARgn: HRGN; AHorzSpace, AVertSpace, AGroupSpace: Integer);
 var
   ItemIndex: Integer;
   Item: TTreeViewItem;
@@ -5149,13 +5215,13 @@ begin
   for ItemIndex := 0 to AItem.Count - 1 do
     begin
       Item := AItem.Items[ItemIndex];
-      ItemRect := GetBoundsRectEx(Item, AHorzSpace, AVertSpace);
+      ItemRect := GetBoundsRectEx(Item, AHorzSpace, AVertSpace, AGroupSpace);
       ItemRect.Top := Min(0, ItemRect.Top);
       ItemRegion := CreateRectRgnIndirect(ItemRect);
       CombineRgn(ARgn, ARgn, ItemRegion, RGN_OR);
       DeleteObject(ItemRegion);
       if Item.Expanded and (Item.Count > 0) then
-        CreateChildsRegion(Item, ARgn, AHorzSpace, AVertSpace);
+        CreateChildsRegion(Item, ARgn, AHorzSpace, AVertSpace, AGroupSpace);
     end;
 end;
 
@@ -5175,7 +5241,8 @@ begin
     end;
 end;
 
-procedure DoUpdate2Iterate(ARegions: TRegions; AItem: TTreeViewItem; AX, AY, AHorzSpace, AVertSpace: Integer; ARegion: HRGN
+procedure DoUpdate2Iterate(ARegions: TRegions; AItem: TTreeViewItem; AX, AY,
+  AHorzSpace, AVertSpace, AGroupSpace: Integer; ARegion: HRGN
   {$IFDEF DEBUG}; AWnd: HWND; ADC: HDC; ASaveXOffset, ASaveYOffset: Integer{$ENDIF});
 var
   ItemIndex: Integer;
@@ -5223,7 +5290,7 @@ begin
       for ItemIndex := 0 to AItem.Count - 1 do
         begin
           Item := AItem.Items[ItemIndex];
-          DoUpdate2Iterate(ARegions, Item, AX, Y, AHorzSpace, AVertSpace, ChildsRegion
+          DoUpdate2Iterate(ARegions, Item, AX, Y, AHorzSpace, AVertSpace, AGroupSpace, ChildsRegion
             {$IFDEF DEBUG}, AWnd, ADC, ASaveXOffset, ASaveYOffset{$ENDIF});
           Y := Item.FTop + Item.FHeight + AVertSpace;
         end;
@@ -5250,7 +5317,7 @@ begin
     end;
 
   StartTop := AItem.FTop;
-  AItem.FTop := ARegions.FindTop(GetBoundsRectEx(AItem, AHorzSpace, AVertSpace));
+  AItem.FTop := ARegions.FindTop(GetBoundsRectEx(AItem, AHorzSpace, AVertSpace, AGroupSpace));
   if (ChildsRegion <> 0) and (AItem.FTop <> StartTop) then
     begin
       Inc(MoveDelta, AItem.FTop - StartTop);
@@ -5310,7 +5377,7 @@ begin
           end;
     end;
 
-  R := GetBoundsRectEx(AItem, AHorzSpace, AVertSpace);
+  R := GetBoundsRectEx(AItem, AHorzSpace, AVertSpace, AGroupSpace);
   R.Top := 0;
   Temp := CreateRectRgnIndirect(R);
   CombineRgn(ARegion, ARegion, Temp, RGN_OR);
@@ -5321,7 +5388,7 @@ begin
           MoveChilds(AItem, 0, MoveDelta);
           ARegions.Pop;
           ChildsRegion := ARegions.Push;
-          CreateChildsRegion(AItem, ChildsRegion, AHorzSpace, AVertSpace);
+          CreateChildsRegion(AItem, ChildsRegion, AHorzSpace, AVertSpace, AGroupSpace);
         end;
       CombineRgn(ARegion, ARegion, ChildsRegion, RGN_OR);
       ARegions.Pop;
@@ -5365,7 +5432,7 @@ begin
       UpdateOptimalSize(AItem.Items[ItemIndex], ALeft, ATop, ARight, AHeight);
 end;
 
-procedure TTreeView.DoUpdate2;
+function TTreeView.DoUpdate2: Boolean;
 var
   {$IFDEF DEBUG}
   SaveXOffset: Integer;
@@ -5381,6 +5448,9 @@ var
   Item: TTreeViewItem;
   Left, Top: Integer;
 begin
+  Result := False;
+  if not FNeedUpdateItemPositions or FDestroying then Exit;
+
   if FNeedUpdateItemSize then
     for ItemIndex := 0 to Count - 1 do
       Items[ItemIndex].NeedUpdateSizeWithChilds;
@@ -5414,7 +5484,7 @@ begin
                 Item := Items[ItemIndex];
 
                 ChildsRegion := Regions.Push;
-                DoUpdate2Iterate(Regions, Item, XOffset, YOffset, HorzSpace, VertSpace, ChildsRegion
+                DoUpdate2Iterate(Regions, Item, XOffset, YOffset, HorzSpace, VertSpace, GroupSpace, ChildsRegion
                   {$IFDEF DEBUG}, FHandle, DC, SaveXOffset, SaveYOffset{$ENDIF});
                 CombineRgn(Region, Region, ChildsRegion, RGN_OR);
                 Regions.Pop;
@@ -5444,13 +5514,14 @@ begin
           ReleaseDC(FHandle, DC);
         end;
     end;
+  Result := True;
 end;
 
 procedure TTreeView.DoUpdate;
 begin
   if FLockUpdate or (FUpdateCount > 0) or not FNeedUpdateItemPositions or FDestroying then Exit;
   DoUpdate2;
-  UpdateScrollBars;
+  UpdateScrollBars(False);
   Invalidate;
 end;
 
@@ -5601,6 +5672,12 @@ begin
         OpenTheme;
       WM_DPICHANGED_BEFOREPARENT:
         Dpi := GetDpiForWindow(FHandle);
+      TVM_GETTHEME:
+        case AWParam of
+          TVT_TREEVIEW: Result := TreeViewTheme;
+          TVT_BUTTON: Result := ButtonTheme;
+          TVT_WINDOW: Result := WindowTheme;
+        end;
       WM_WININICHANGE:
         begin
           UpdateScrollBarSize;
@@ -5693,6 +5770,13 @@ begin
           TVSBF_XBORDER: Result := HorzSpace;
           TVSBF_YBORDER: Result := VertSpace;
         end;
+      TVM_SETGROUPSPACE:
+        begin
+          Result := GroupSpace;
+          GroupSpace := ALParam;
+        end;
+      TVM_GETGROUPSPACE:
+         Result := GroupSpace;
       TVM_SETINDENT:
         begin
           Result := FIndent;
@@ -5835,7 +5919,7 @@ begin
       WM_MOUSEHOVER:
         MouseHover(GetClientCursorPos);
       WM_MOUSELEAVE:
-        MouseLeave;
+        MouseLeave(GetClientCursorPos);
       WM_MOUSEWHEEL:
         MouseWheel(Short(HiWord(AWParam)), True);
       WM_MOUSEHWHEEL:
@@ -5989,7 +6073,47 @@ begin
         begin
           SetInsertMaskItemAfter(TTreeViewItem(ALParam), AWParam <> 0);
           Result := 1;
-        end
+        end;
+      TVM_GETITEMCHILDCOUNT:
+        begin
+          if ALPARAM <> LPARAM(TVI_ROOT) then TreeItem := TTreeViewItem(ALParam)
+                                         else TreeItem := nil;
+          if Assigned(TreeItem) then Result := TreeItem.Count
+                                else Result := Count;
+        end;
+      TVM_GETITEMCHILD:
+        begin
+          if ALPARAM <> LPARAM(TVI_ROOT) then TreeItem := TTreeViewItem(ALParam)
+                                         else TreeItem := nil;
+          if Assigned(TreeItem) then Result := LRESULT(TreeItem.Items[AWParam])
+                                else Result := LRESULT(Items[AWParam]);
+        end;
+      TVM_UPDATEITEMSIZE:
+        begin
+          TreeItem := TTreeViewItem(ALParam);
+          if Assigned(TreeItem) then
+            begin
+              TreeItem.NeedUpdateSize;
+              Update;
+            end;
+        end;
+      TVM_INVALIDATEITEM:
+        begin
+          TreeItem := TTreeViewItem(ALParam);
+          if Assigned(TreeItem) then
+            InvalidateItem(TreeItem, PRect(AWParam));
+        end;
+      TVM_GETOPTIMALSIZE:
+        if ALParam <> 0 then
+          begin
+            if DoUpdate2 then
+              begin
+                UpdateScrollBars(False);
+                Invalidate;
+              end;
+            PSize(ALParam).cx := FOptimalWidth;
+            PSize(ALParam).cy := FOptimalHeight;
+          end;
     else
       Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
     end;
@@ -6220,77 +6344,94 @@ end;
 
 procedure TTreeView.CloseTheme;
 begin
-  if FTheme <> 0 then
+  if FTreeViewTheme <> 0 then
     begin
-      CloseThemeData(FTheme);
-      FTheme := 0;
+      CloseThemeData(FTreeViewTheme);
+      FTreeViewTheme := 0;
     end;
-  if FCheckBoxTheme <> 0 then
+  if FButtonTheme <> 0 then
     begin
-      CloseThemeData(FCheckBoxTheme);
-      FCheckBoxTheme := 0;
+      CloseThemeData(FButtonTheme);
+      FButtonTheme := 0;
     end;
-  FTreeItemThemeExist := False;
-  FButtonThemeExist := False;
-  FHotButtonThemeExist := False;
-  FCheckBoxThemeExist := False;
+  if FWindowTheme <> 0 then
+    begin
+      CloseThemeData(FWindowTheme);
+      FWindowTheme := 0;
+    end;
+  FTreeViewTreeItemThemeExist := False;
+  FTreeViewGlyphThemeExist := False;
+  FTreeViewHotGlyphThemeExist := False;
+  FButtonCheckBoxThemeExist := False;
 end;
 
 procedure TTreeView.OpenTheme;
 var
   SystemDpi: UINT;
 begin
-  //Exit;
   CloseTheme;
   if UseThemes then
     begin
       SystemDpi := GetDpiForSystem;
 
-      FTheme := {0;//} OpenThemeDataForDpi(FHandle, VSCLASS_TREEVIEW, Dpi, False);
-      FDpiTheme := FTheme <> 0;
-      if not FDpiTheme then
+      FTreeViewTheme := {0;//} OpenThemeDataForDpi(FHandle, VSCLASS_TREEVIEW, Dpi, False);
+      FDpiTreeViewTheme := FTreeViewTheme <> 0;
+      if not FDpiTreeViewTheme then
         begin
           if Dpi = SystemDpi then
             begin
-              FTheme := OpenThemeData(FHandle, VSCLASS_TREEVIEW);
-              FDpiTheme := True;
+              FTreeViewTheme := OpenThemeData(FHandle, VSCLASS_TREEVIEW);
+              FDpiTreeViewTheme := True;
             end
           else
-            FTheme := OpenThemeDataEx(FHandle, VSCLASS_TREEVIEW, OTD_FORCE_RECT_SIZING);
+            FTreeViewTheme := OpenThemeDataEx(FHandle, VSCLASS_TREEVIEW, OTD_FORCE_RECT_SIZING);
         end;
-      if FTheme <> 0 then
+      if FTreeViewTheme <> 0 then
         begin
-          FTreeItemThemeExist := IsThemePartDefined(FTheme, TVP_TREEITEM, 0);
-          FButtonThemeExist := IsThemePartDefined(FTheme, TVP_GLYPH, 0);
-          FHotButtonThemeExist := IsThemePartDefined(FTheme, TVP_HOTGLYPH, 0);
-          if not (FButtonThemeExist and FHotButtonThemeExist and Succeeded(GetThemePartSize(FTheme, 0, TVP_GLYPH, GLPS_CLOSED, nil, TS_TRUE, FThemeButtonSize))) then
+          FTreeViewTreeItemThemeExist := IsThemePartDefined(FTreeViewTheme, TVP_TREEITEM, 0);
+          FTreeViewGlyphThemeExist := IsThemePartDefined(FTreeViewTheme, TVP_GLYPH, 0);
+          FTreeViewHotGlyphThemeExist := IsThemePartDefined(FTreeViewTheme, TVP_HOTGLYPH, 0);
+          if not (FTreeViewGlyphThemeExist and Succeeded(GetThemePartSize(FTreeViewTheme, 0, TVP_GLYPH, 0, nil, TS_TRUE, FThemeGlyphSize))) then
             begin
-              FThemeButtonSize.cx := 15 * Dpi div 96;
-              FThemeButtonSize.cy := FThemeButtonSize.cx;
+              FThemeGlyphSize.cx := 15 * Dpi div 96;
+              FThemeGlyphSize.cy := FThemeGlyphSize.cx;
             end;
         end;
 
-      FCheckBoxTheme := {0;//} OpenThemeDataForDpi(0, VSCLASS_BUTTON, Dpi, False);
-      FDpiCheckTheme := FCheckBoxTheme <> 0;
-      if not FDpiCheckTheme then
+      FButtonTheme := {0;//} OpenThemeDataForDpi(0, VSCLASS_BUTTON, Dpi, False);
+      FDpiButtonTheme := FButtonTheme <> 0;
+      if not FDpiButtonTheme then
         begin
           if Dpi = SystemDpi then
             begin
-              FCheckBoxTheme := OpenThemeData(0, VSCLASS_BUTTON);
-              FDpiCheckTheme := True;
+              FButtonTheme := OpenThemeData(0, VSCLASS_BUTTON);
+              FDpiButtonTheme := True;
             end
           else
-            FCheckBoxTheme := OpenThemeDataEx(0, VSCLASS_BUTTON, OTD_FORCE_RECT_SIZING);
+            FButtonTheme := OpenThemeDataEx(0, VSCLASS_BUTTON, OTD_FORCE_RECT_SIZING);
         end;
-      if FCheckBoxTheme <> 0 then
+      if FButtonTheme <> 0 then
         begin
-          FCheckBoxThemeExist := IsThemePartDefined(FCheckBoxTheme, BP_CHECKBOX, 0);
-          if not (FCheckBoxThemeExist and Succeeded(GetThemePartSize(FCheckBoxTheme, 0, BP_CHECKBOX, 0, nil, TS_TRUE, FThemeCheckBoxSize))) then
+          FButtonCheckBoxThemeExist := IsThemePartDefined(FButtonTheme, BP_CHECKBOX, 0);
+          if not (FButtonCheckBoxThemeExist and Succeeded(GetThemePartSize(FButtonTheme, 0, BP_CHECKBOX, 0, nil, TS_TRUE, FThemeCheckBoxSize))) then
             begin
               FThemeCheckBoxSize.cx := 13 * Dpi div SystemDpi;
               FThemeCheckBoxSize.cx := FThemeCheckBoxSize.cx or 1; // Make it odd
-              FThemeCheckBoxSize.cy := FThemeButtonSize.cx;
+              FThemeCheckBoxSize.cy := FThemeGlyphSize.cx;
             end;
+        end;
+
+      FWindowTheme := {0;//} OpenThemeDataForDpi(0, VSCLASS_WINDOW, Dpi, False);
+      FDpiWindowTheme := FWindowTheme <> 0;
+      if not FDpiWindowTheme then
+        begin
+          if Dpi = SystemDpi then
+            begin
+              FWindowTheme := OpenThemeData(0, VSCLASS_Window);
+              FDpiWindowTheme := True;
+            end
+          else
+            FWindowTheme := OpenThemeDataEx(0, VSCLASS_Window, OTD_FORCE_RECT_SIZING);
         end;
     end;
   FullUpdate;
@@ -6298,7 +6439,7 @@ end;
 
 function TTreeView.GetThemed: Boolean;
 begin
-  Result := Theme <> 0;
+  Result := TreeViewTheme <> 0;
 end;
 
 procedure TTreeView.DeleteFont;
@@ -6327,19 +6468,19 @@ var
   SaveFont: HFONT;
   R: TRect;
 begin
-  FButtonSize.cx := 9;
+  FGlyphSize.cx := 9;
   DC := GetDC(FHandle);
   if DC <> 0 then
     try
       SaveFont := SelectObject(DC, Font);
       R.Left := 0; R.Top := 0; R.Right := 0; R.Bottom := 0;
       DrawTextEx(DC, 'Wq', 1, R, DT_CALCRECT or DT_LEFT or DT_NOPREFIX, nil);
-      FButtonSize.cx := Round((R.Bottom / 4) * 3) or 1;
+      FGlyphSize.cx := Round((R.Bottom / 4) * 3) or 1;
       SelectObject(DC, SaveFont);
     finally
       ReleaseDC(FHandle, DC);
     end;
-  FButtonSize.cy := FButtonSize.cx;
+  FGlyphSize.cy := FGlyphSize.cx;
 end;
 
 procedure TTreeView.UpdateCheckSize;
@@ -6375,16 +6516,16 @@ begin
     end;
 end;
 
-function TTreeView.GetButtonSize: TSize;
+function TTreeView.GetTreeViewGlyphSize: TSize;
 begin
-  if Themed and ButtonThemeExist then Result := FThemeButtonSize
-                                 else Result := FButtonSize;
+  if Themed and TreeViewGlyphThemeExist then Result := FThemeGlyphSize
+                                        else Result := FGlyphSize;
 end;
 
-function TTreeView.GetCheckBoxSize: TSize;
+function TTreeView.GetButtonCheckBoxSize: TSize;
 begin
-  if CheckBoxThemeExist then Result := FThemeCheckBoxSize
-                        else Result := FCheckBoxSize;
+  if ButtonCheckBoxThemeExist then Result := FThemeCheckBoxSize
+                              else Result := FCheckBoxSize;
 end;
 
 procedure TTreeView.SetFont(AFont: HFONT);
@@ -6525,7 +6666,7 @@ begin
   if FStateImageList <> 0 then
     Result := FStateImageListIconSize
   else
-    Result := CheckBoxSize;
+    Result := ButtonCheckBoxSize;
 end;
 
 procedure TTreeView.SetBorders(AHorzBorder, AVertBorder: Integer);
@@ -6555,21 +6696,28 @@ begin
   if (FHorzSpace = AHorzSpace) and (FVertSpace = AVertSpace) then Exit;
   FHorzSpace := AHorzSpace;
   FVertSpace := AVertSpace;
-  FullUpdate;
+  Update;
 end;
 
 procedure TTreeView.SetHorzSpace(AHorzSpace: Integer);
 begin
   if FHorzSpace = AHorzSpace then Exit;
   FHorzSpace := AHorzSpace;
-  FullUpdate;
+  Update;
 end;
 
 procedure TTreeView.SetVertSpace(AVertSpace: Integer);
 begin
   if FVertSpace = AVertSpace then Exit;
   FVertSpace := AVertSpace;
-  FullUpdate;
+  Update;
+end;
+
+procedure TTreeView.SetGroupSpace(AGroupSpace: Integer);
+begin
+  if FGroupSpace = AGroupSpace then Exit;
+  FGroupSpace := AGroupSpace;
+  Update;
 end;
 
 function TTreeView.GetItems: TTreeViewItems;

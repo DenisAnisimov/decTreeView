@@ -39,7 +39,14 @@
         <CfgParent>Base</CfgParent>
         <Base>true</Base>
     </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Cfg_2)'=='true') or '$(Cfg_2_Win32)'!=''">
+        <Cfg_2_Win32>true</Cfg_2_Win32>
+        <CfgParent>Cfg_2</CfgParent>
+        <Cfg_2>true</Cfg_2>
+        <Base>true</Base>
+    </PropertyGroup>
     <PropertyGroup Condition="'$(Base)'!=''">
+        <DCC_OutputNeverBuildDcps>true</DCC_OutputNeverBuildDcps>
         <DCC_Description>decTreeView Component</DCC_Description>
         <DCC_Define>BPL_MODE;$(DCC_Define)</DCC_Define>
         <DCC_BplOutput>..\..\BPL\Delphi XE4</DCC_BplOutput>
@@ -80,6 +87,8 @@
         <DCC_SymbolReferenceInfo>0</DCC_SymbolReferenceInfo>
         <DCC_DebugInformation>false</DCC_DebugInformation>
     </PropertyGroup>
+    <PropertyGroup Condition="'$(Cfg_2_Win32)'!=''">
+    </PropertyGroup>
     <ItemGroup>
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
@@ -88,6 +97,7 @@
         <DCCReference Include="vcl.dcp"/>
         <DCCReference Include="..\..\Source\decTreeView.pas"/>
         <DCCReference Include="..\..\Source\decTreeViewLib.pas"/>
+        <DCCReference Include="..\..\Source\decTreeViewLibApi.pas"/>
         <DCCReference Include="..\..\Source\decTreeViewRCommon.pas"/>
         <BuildConfiguration Include="Release">
             <Key>Cfg_2</Key>

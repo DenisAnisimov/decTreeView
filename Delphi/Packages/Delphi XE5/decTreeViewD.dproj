@@ -41,6 +41,7 @@
         <Base>true</Base>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base)'!=''">
+        <DCC_OutputNeverBuildDcps>true</DCC_OutputNeverBuildDcps>
         <DCC_Description>decTreeView Component</DCC_Description>
         <DCC_BplOutput>..\..\BPL\Delphi XE5</DCC_BplOutput>
         <DCC_Define>BPL_MODE;$(DCC_Define)</DCC_Define>
@@ -87,6 +88,7 @@
         <DCCReference Include="designide.dcp"/>
         <DCCReference Include="..\..\Source\decTreeView.pas"/>
         <DCCReference Include="..\..\Source\decTreeViewLib.pas"/>
+        <DCCReference Include="..\..\Source\decTreeViewLibApi.pas"/>
         <DCCReference Include="..\..\Source\decTreeViewDCommon.pas"/>
         <BuildConfiguration Include="Release">
             <Key>Cfg_2</Key>

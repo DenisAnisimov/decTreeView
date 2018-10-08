@@ -46,6 +46,7 @@
         <Base>true</Base>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base)'!=''">
+        <DCC_OutputNeverBuildDcps>true</DCC_OutputNeverBuildDcps>
         <DCC_Namespace>System;Xml;Data;Datasnap;Web;Soap;Vcl;Vcl.Imaging;Vcl.Touch;Vcl.Samples;Vcl.Shell;$(DCC_Namespace)</DCC_Namespace>
         <DCC_CBuilderOutput>All</DCC_CBuilderOutput>
         <DCC_Description>decTreeView Component</DCC_Description>
@@ -97,6 +98,7 @@
         <DCCReference Include="designide.dcp"/>
         <DCCReference Include="..\..\Source\decTreeView.pas"/>
         <DCCReference Include="..\..\Source\decTreeViewLib.pas"/>
+        <DCCReference Include="..\..\Source\decTreeViewLibApi.pas"/>
         <DCCReference Include="..\..\Source\decTreeViewDCommon.pas"/>
         <BuildConfiguration Include="Release">
             <Key>Cfg_2</Key>

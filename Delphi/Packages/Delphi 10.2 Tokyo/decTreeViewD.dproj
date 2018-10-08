@@ -62,6 +62,7 @@
         <DCC_Define>BPL_MODE;$(DCC_Define)</DCC_Define>
         <DCC_Description>decTreeView Component</DCC_Description>
         <DesignOnlyPackage>true</DesignOnlyPackage>
+        <DCC_OutputNeverBuildDcps>true</DCC_OutputNeverBuildDcps>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Win32)'!=''">
         <DCC_Namespace>Winapi;System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;Bde;$(DCC_Namespace)</DCC_Namespace>
@@ -98,6 +99,7 @@
         <DCCReference Include="designide.dcp"/>
         <DCCReference Include="..\..\Source\decTreeView.pas"/>
         <DCCReference Include="..\..\Source\decTreeViewLib.pas"/>
+        <DCCReference Include="..\..\Source\decTreeViewLibApi.pas"/>
         <DCCReference Include="..\..\Source\decTreeViewDCommon.pas"/>
         <BuildConfiguration Include="Release">
             <Key>Cfg_2</Key>

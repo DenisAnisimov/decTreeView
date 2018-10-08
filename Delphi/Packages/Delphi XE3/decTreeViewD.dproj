@@ -52,6 +52,7 @@
         <Base>true</Base>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base)'!=''">
+        <DCC_OutputNeverBuildDcps>true</DCC_OutputNeverBuildDcps>
         <DesignOnlyPackage>true</DesignOnlyPackage>
         <GenPackage>true</GenPackage>
         <GenDll>true</GenDll>
@@ -99,6 +100,7 @@
         <DCCReference Include="designide.dcp"/>
         <DCCReference Include="..\..\Source\decTreeView.pas"/>
         <DCCReference Include="..\..\Source\decTreeViewLib.pas"/>
+        <DCCReference Include="..\..\Source\decTreeViewLibApi.pas"/>
         <DCCReference Include="..\..\Source\decTreeViewDCommon.pas"/>
         <BuildConfiguration Include="Release">
             <Key>Cfg_2</Key>

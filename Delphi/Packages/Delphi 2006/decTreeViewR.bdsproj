@@ -140,7 +140,7 @@
       <Parameters Name="LoadUnspecifiedSymbols">False</Parameters>
     </Parameters>
     <VersionInfo>
-      <VersionInfo Name="IncludeVerInfo">False</VersionInfo>
+      <VersionInfo Name="IncludeVerInfo">False</VersionInfo>  
     </VersionInfo>
   </Delphi.Personality>
 </BorlandProject>

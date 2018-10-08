@@ -24,7 +24,7 @@ package decTreeViewR;
 {$IMAGEBASE $400000}
 {$DESCRIPTION 'decTreeView Component'}
 {$RUNONLY}
-{$IMPLICITBUILD ON}
+{$IMPLICITBUILD OFF}
 {$DEFINE RELEASE}
 {$DEFINE BPL_MODE}
 
@@ -35,6 +35,7 @@ requires
 contains
   decTreeView in '..\..\Source\decTreeView.pas',
   decTreeViewLib in '..\..\Source\decTreeViewLib.pas',
+  decTreeViewLibApi in '..\..\Source\decTreeViewLibApi.pas',
   decTreeViewRCommon in '..\..\Source\decTreeViewRCommon.pas';
 
 end.

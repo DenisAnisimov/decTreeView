@@ -24,6 +24,7 @@
 			<Base>true</Base>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Base)'!=''">
+			<DCC_OutputNeverBuildDcps>true</DCC_OutputNeverBuildDcps>
 			<DCC_Description>decTreeView Component</DCC_Description>
 			<RuntimeOnlyPackage>true</RuntimeOnlyPackage>
 			<DCC_ImageBase>00400000</DCC_ImageBase>
@@ -59,6 +60,9 @@
 			<DCCReference Include="vcl.dcp"/>
 			<DCCReference Include="..\..\Source\decTreeView.pas"/>
 			<DCCReference Include="..\..\Source\decTreeViewLib.pas"/>
+			<DCCReference Include="..\..\Source\decTreeViewLibApi.pas">
+				<ModuleName>decTreeViewLib</ModuleName>
+			</DCCReference>
 			<DCCReference Include="..\..\Source\decTreeViewRCommon.pas"/>
 			<BuildConfiguration Include="Release">
 				<Key>Cfg_2</Key>

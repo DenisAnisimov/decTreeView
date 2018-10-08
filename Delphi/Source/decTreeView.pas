@@ -1,6 +1,6 @@
 unit decTreeView;
 
-{$DEFINE ENABLE_GDIPLUS}
+{ $DEFINE ENABLE_GDIPLUS}
 
 interface
 
@@ -15,9 +15,9 @@ uses
   Windows, Messages, CommCtrl, Classes, Controls, ComCtrls, Forms {$IFDEF ENABLE_GDIPLUS}, GDIPlus{$ENDIF};
 
 type
-  TTVStateIconChangingEvent = procedure(Sender: TObject; Node: TTreeNode; var AAllowChange: Boolean) of object;
+  TTVStateIconChangingEvent = procedure(Sender: TObject; Node: TTreeNode; var AllowChange: Boolean) of object;
   TTVStateIconChangedEvent = procedure(Sender: TObject; Node: TTreeNode) of object;
-  TTVGetItemSizeEvent = procedure(ASender: TCustomTreeView; Node: TTreeNode; var AWidth, AHeight: Integer) of object;
+  TTVGetNodeSizeEvent = procedure(Sender: TCustomTreeView; Node: TTreeNode; var ANodeWidth, ANodeHeight: Integer) of object;
 
   TExtraCheckboxesState = (ecsMixed, ecsDimmed, ecsExclusion);
   TExtraCheckboxesStates = set of TExtraCheckboxesState;
@@ -33,6 +33,7 @@ type
     procedure CreateParams(var AParams: TCreateParams); override;
     procedure CreateWnd; override;
     procedure WMERASEBKGND(var AMessage: TMessage); message WM_ERASEBKGND;
+    procedure GetNodeSize(ANode: TTreeNode; var AItemWidth, AItemHeight: Integer); dynamic;
     procedure CNNotify(var AMessage: TWMNotify); message CN_NOTIFY;
   private
     FInitCheckboxes: Boolean;
@@ -44,13 +45,21 @@ type
   private
     FAlternativeView: Boolean;
     FAutoCenter: Boolean;
+    FItemBorder: Integer;
+    FHorzSpace: Integer;
+    FVertSpace: Integer;
+    FGroupSpace: Integer;
     FCheckboxes: Boolean;
     FExtraCheckboxesStates: TExtraCheckboxesStates;
-    FOnGetItemSize: TTVGetItemSizeEvent;
+    FOnGetItemSize: TTVGetNodeSizeEvent;
     FOnStateIconChanging: TTVStateIconChangingEvent;
     FOnStateIconChanged: TTVStateIconChangedEvent;
     procedure SetAlternativeView(AAlternativeView: Boolean);
     procedure SetAutoCenter(AAutoCenter: Boolean);
+    procedure SetItemBorder(AItemBorder: Integer);
+    procedure SetHorzSpace(AHorzSpace: Integer);
+    procedure SetVertSpace(AVertSpace: Integer);
+    procedure SetGroupSpace(AGroupSpace: Integer);
     procedure UpdateCheckboxes;
     procedure SetCheckboxes(ACheckboxes: Boolean);
     procedure SetExtraCheckboxesStates(AExtraCheckboxesStates: TExtraCheckboxesStates);
@@ -58,9 +67,13 @@ type
   published
     property AlternativeView: Boolean read FAlternativeView write SetAlternativeView default True;
     property AutoCenter: Boolean read FAutoCenter write SetAutoCenter default True;
+    property ItemBorder: Integer read FItemBorder write SetItemBorder default 2;
+    property HorzSpace: Integer read FHorzSpace write SetHorzSpace default 30;
+    property VertSpace: Integer read FVertSpace write SetVertSpace default 10;
+    property GroupSpace: Integer read FGroupSpace write SetGroupSpace default 3;
     property Checkboxes: Boolean read FCheckboxes write SetCheckboxes default False;
     property ExtraCheckboxesStates: TExtraCheckboxesStates read FExtraCheckboxesStates write SetExtraCheckboxesStates stored IsSetExtraCheckboxesStates;
-    property OnGetItemSize: TTVGetItemSizeEvent read FOnGetItemSize write FOnGetItemSize;
+    property OnGetItemSize: TTVGetNodeSizeEvent read FOnGetItemSize write FOnGetItemSize;
     property OnStateIconChanging: TTVStateIconChangingEvent read FOnStateIconChanging write FOnStateIconChanging;
     property OnStateIconChanged: TTVStateIconChangedEvent read FOnStateIconChanged write FOnStateIconChanged;
   end;
@@ -68,17 +81,58 @@ type
 implementation
 
 uses
-  SysUtils, decTreeViewLib;
+  SysUtils, ImgList, decTreeViewLibApi {$IFNDEF DLL_TEST_MODE}, decTreeViewLib{$ENDIF};
 
 {$if CompilerVersion < 19}
 {$I decTreeViewFix.inc}
 {$ifend}
+
+{$IFDEF DLL_TEST_MODE}
+type
+  TInitTreeViewLib = function: ATOM; stdcall;
+
+var
+  TreeViewLib: HMODULE;
+  InitTreeViewLibProc: TInitTreeViewLib;
+
+const
+  TreeViewClassName: PChar = 'decTreeView';
+
+function InitTreeViewLib: ATOM;
+var
+  DllName: string;
+  Error: DWORD;
+begin
+  if TreeViewLib = 0 then
+    begin
+      DllName := ExtractFilePath(GetModuleName(HInstance)) +
+        {$IFDEF WIN64}'decTreeViewDll.64.dll'{$ELSE}'decTreeViewDll.32.dll'{$ENDIF};
+      TreeViewLib := LoadLibrary(PChar(DllName));
+      if TreeViewLib = 0 then
+        RaiseLastOSError;
+      @InitTreeViewLibProc := GetProcAddress(TreeViewLib, 'InitTreeViewLib');
+      if not Assigned(InitTreeViewLibProc) then
+        RaiseLastOSError;
+    end;
+  Result := InitTreeViewLibProc;
+end;
+
+procedure DoneTreeViewLib;
+begin
+  if TreeViewLib <> 0 then
+    FreeLibrary(TreeViewLib);
+end;
+{$ENDIF}
 
 constructor TdecTreeView.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
   FAlternativeView := True;
   FAutoCenter := True;
+  FItemBorder := 2;
+  FHorzSpace := 30;
+  FVertSpace := 10;
+  FGroupSpace := 3;
 end;
 
 destructor TdecTreeView.Destroy;
@@ -151,6 +205,9 @@ begin
         if AutoCenter then Style := TVS_EX_AUTOCENTER
                       else Style := 0;
         SendMessage(Handle, TVM_SETEXTENDEDSTYLE, Integer(TVS_EX_AUTOCENTER), Integer(Style));
+        TreeView_SetBorder(Handle, TVSBF_XBORDER or TVSBF_YBORDER, FItemBorder, FItemBorder);
+        TreeView_SetSpace(Handle, TVSBF_XSPACE or TVSBF_YSPACE, FHorzSpace, FVertSpace);
+        TreeView_SetGroupSpace(Handle, FGroupSpace);
       end;
 
     if Checkboxes then
@@ -195,6 +252,12 @@ begin
     inherited;
 end;
 
+procedure TdecTreeView.GetNodeSize(ANode: TTreeNode; var AItemWidth, AItemHeight: Integer);
+begin
+  if Assigned(FOnGetItemSize) then
+    FOnGetItemSize(Self, ANode, AItemWidth, AItemHeight);
+end;
+
 type
   TTreeNodesAccess = class(TTreeNodes);
 
@@ -215,7 +278,7 @@ procedure TdecTreeView.CNNotify(var AMessage: TWMNotify);
 
 var
   Node: TTreeNode;
-  NMTVCustomDraw: PNMTVCustomDraw;
+  NMTVGetItemSize: PNMTVGetItemSize;
   ItemWidth, ItemHeight: Integer;
   NMTVItemChange: PNMTVItemChange;
   AllowChange: Boolean;
@@ -223,19 +286,14 @@ begin
   case AMessage.NMHdr.code of
     TVN_GETITEMSIZE:
       begin
-        if Assigned(FOnGetItemSize) then
-          begin
-            NMTVCustomDraw := PNMTVCustomDraw(AMessage.NMHdr);
-            Node := TTreeNode(NMTVCustomDraw.nmcd.lItemlParam);
-            ItemWidth := NMTVCustomDraw.nmcd.rc.Right;
-            ItemHeight := NMTVCustomDraw.nmcd.rc.Bottom;
-            FOnGetItemSize(Self, Node, ItemWidth, ItemHeight);
-            NMTVCustomDraw.nmcd.rc.Right := ItemWidth;
-            NMTVCustomDraw.nmcd.rc.Bottom := ItemHeight;
-            AMessage.Result := 1;
-          end
-        else
-          AMessage.Result := 0;
+        NMTVGetItemSize := PNMTVGetItemSize(AMessage.NMHdr);
+        Node := TTreeNode(NMTVGetItemSize.nmcd.lItemlParam);
+        ItemWidth := NMTVGetItemSize.nmcd.rc.Right;
+        ItemHeight := NMTVGetItemSize.nmcd.rc.Bottom;
+        GetNodeSize(Node, ItemWidth, ItemHeight);
+        NMTVGetItemSize.nmcd.rc.Right := ItemWidth;
+        NMTVGetItemSize.nmcd.rc.Bottom := ItemHeight;
+        AMessage.Result := 1;
       end;
     TVN_ITEMCHANGING:
       begin
@@ -372,6 +430,38 @@ begin
     SetStyleEx(TVS_EX_AUTOCENTER, FAutoCenter);
 end;
 
+procedure TdecTreeView.SetItemBorder(AItemBorder: Integer);
+begin
+  if FItemBorder = AItemBorder then Exit;
+  FItemBorder := AItemBorder;
+  if HandleAllocated and AlternativeView then
+    TreeView_SetBorder(Handle, TVSBF_XBORDER or TVSBF_YBORDER, FItemBorder, FItemBorder);
+end;
+
+procedure TdecTreeView.SetHorzSpace(AHorzSpace: Integer);
+begin
+  if FHorzSpace = AHorzSpace then Exit;
+  FHorzSpace := AHorzSpace;
+  if HandleAllocated and AlternativeView then
+    TreeView_SetSpace(Handle, TVSBF_XSPACE, FHorzSpace, 0);
+end;
+
+procedure TdecTreeView.SetVertSpace(AVertSpace: Integer);
+begin
+  if FVertSpace = AVertSpace then Exit;
+  FVertSpace := AVertSpace;
+  if HandleAllocated and AlternativeView then
+    TreeView_SetSpace(Handle, TVSBF_YSPACE, 0, FVertSpace);
+end;
+
+procedure TdecTreeView.SetGroupSpace(AGroupSpace: Integer);
+begin
+  if FGroupSpace = AGroupSpace then Exit;
+  FGroupSpace := AGroupSpace;
+  if HandleAllocated and AlternativeView then
+    TreeView_SetGroupSpace(Handle, FGroupSpace);
+end;
+
 procedure TdecTreeView.UpdateCheckboxes;
 var
   Style: UINT;
@@ -443,6 +533,14 @@ function TdecTreeView.IsSetExtraCheckboxesStates: Boolean;
 begin
   Result := Checkboxes and (FExtraCheckboxesStates <> []);
 end;
+
+initialization
+
+finalization
+  {$IFDEF DLL_TEST_MODE}
+  DoneTreeViewLib;
+  {$ENDIF}
+
 
 end.
 

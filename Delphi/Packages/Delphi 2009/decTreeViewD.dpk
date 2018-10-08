@@ -24,7 +24,7 @@ package decTreeViewD;
 {$IMAGEBASE $400000}
 {$DESCRIPTION 'decTreeView Component'}
 {$DESIGNONLY}
-{$IMPLICITBUILD ON}
+{$IMPLICITBUILD OFF}
 {$DEFINE BPL_MODE}
 
 requires
@@ -34,6 +34,7 @@ requires
 contains
   decTreeView in '..\..\Source\decTreeView.pas',
   decTreeViewLib in '..\..\Source\decTreeViewLib.pas',
+  decTreeViewLibApi in '..\..\Source\decTreeViewLibApi.pas',
   decTreeViewDCommon in '..\..\Source\decTreeViewDCommon.pas';
 
 end.

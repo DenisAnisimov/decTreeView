@@ -25,13 +25,13 @@
     <BorlandProject>
     <BorlandProject>
     <Delphi.Personality>
-      <Parameters>
-        <Parameters Name="UseLauncher">False</Parameters>
-        <Parameters Name="LoadAllSymbols">True</Parameters>
-        <Parameters Name="LoadUnspecifiedSymbols">False</Parameters>
-      </Parameters>
+    <Parameters>
+      <Parameters Name="UseLauncher">False</Parameters>
+      <Parameters Name="LoadAllSymbols">True</Parameters>
+      <Parameters Name="LoadUnspecifiedSymbols">False</Parameters>
+    </Parameters>
     <Package_Options>
-      <Package_Options Name="ImplicitBuild">True</Package_Options>
+      <Package_Options Name="ImplicitBuild">False</Package_Options>
       <Package_Options Name="DesigntimeOnly">True</Package_Options>
       <Package_Options Name="RuntimeOnly">False</Package_Options>
       <Package_Options Name="PackageDescription">decTreeView Component</Package_Options>
@@ -39,11 +39,12 @@
     <VersionInfo>
       <VersionInfo Name="IncludeVerInfo">False</VersionInfo>
     </VersionInfo>
-  <Source>
-    <Source Name="MainSource">decTreeViewD.dpk</Source>
-  </Source>
+    <Source>
+      <Source Name="MainSource">decTreeViewD.dpk</Source>
+    </Source>
   </Delphi.Personality>
-</BorlandProject></BorlandProject>
+  </BorlandProject>
+  </BorlandProject>
   </ProjectExtensions>
   <Import Project="$(MSBuildBinPath)\Borland.Delphi.Targets" />
   <ItemGroup>
@@ -52,6 +53,7 @@
     </DelphiCompile>
     <DCCReference Include="..\..\Source\decTreeView.pas" />
     <DCCReference Include="..\..\Source\decTreeViewLib.pas" />
+    <DCCReference Include="..\..\Source\decTreeViewLibApi.pas" />
     <DCCReference Include="..\..\Source\decTreeViewDCommon.pas" />
     <DCCReference Include="rtl.dcp" />
     <DCCReference Include="designide.dcp" />
