@@ -36,7 +36,8 @@ uses
 procedure Register;
 begin
   RegisterComponents('Win32', [TdecTreeView]);
-  RegisterPropertiesInCategory('Visual', TdecTreeView, ['AlternativeView', 'AutoCenter']);
+  RegisterPropertiesInCategory('Visual', TdecTreeView,
+    ['AlternativeView', 'AutoCenter', 'Direction', 'ItemBorder', 'HorzSpace', 'VertSpace', 'GroupSpace']);
 end;
 
 end.

@@ -804,7 +804,6 @@ type
 
   TKids = (kCompute, kForceYes, kForceNo, kCallback);
 
-
   TTreeViewItems = class;
 
   TTreeViewItem = class(TObject)
@@ -826,8 +825,8 @@ type
     procedure FullExpand(ACode, AAction: UINT; ANotify: Boolean);
     function ExpandParents(AAction: UINT): Boolean;
     procedure SavePositionForAnimation;
-    procedure PreparePositionsForExpandAnimation(ADelta: Integer);
-    procedure PreparePositionsForCollapseAnimation(ADelta: Integer);
+    procedure PreparePositionsForExpandAnimation(AHorzDelta, AVertDelta: Integer);
+    procedure PreparePositionsForCollapseAnimation(AHorzDelta, AVertDelta: Integer);
     procedure UpdateSize(ADC: HDC);
     procedure InitCheckBoxState;
     procedure SelectNextCheckState;
@@ -861,6 +860,7 @@ type
 
     FKids: TKids;
 
+    FMinLeft: Integer;
     FMinTop: Integer;
     FPrevLeft: Integer;
     FPrevTop: Integer;
@@ -1022,6 +1022,10 @@ type
     procedure CalcBaseOffsets(var AXOffset, AYOffset: Integer);
     procedure OffsetMousePoint(var APoint: TPoint);
     procedure OffsetItemRect(var ARect: TRect);
+    function GetOptimalWidth: Integer;
+    function GetOptimalHeight: Integer;
+    property OptimalWidth: Integer read GetOptimalWidth;
+    property OptimalHeight: Integer read GetOptimalHeight;
   private
     // Paint routines
     FBufferedPaintInited: Boolean;
@@ -1152,10 +1156,12 @@ type
     FBorder: Boolean;
     FClientEdge: Boolean;
     FHasButtons: Boolean;
+    FInvertDirection: Boolean;
     FLinesAsRoot: Boolean;
     FNoScroll: Boolean;
     FSingleExpand: Boolean;
     FTrackSelect: Boolean;
+    FVertDirection: Boolean;
     FCheckBoxes: Boolean;
     FCheckBoxStateCount: Integer;
     FCheckBoxStates: array[1..5] of Integer;
@@ -1246,7 +1252,9 @@ type
     property Border: Boolean read FBorder;
     property ClientEdge: Boolean read FClientEdge;
     property HasButtons: Boolean read FHasButtons;
+    property VertDirection: Boolean read FVertDirection;
     property LinesAsRoot: Boolean read FLinesAsRoot;
+    property InvertDirection: Boolean read FInvertDirection;
     property NoScroll: Boolean read FNoScroll write SetNoScroll;
     property SingleExpand: Boolean read FSingleExpand;
     property TrackSelect: Boolean read FTrackSelect;
@@ -1761,7 +1769,7 @@ begin
         end;
 end;
 
-procedure TTreeViewItem.PreparePositionsForExpandAnimation(ADelta: Integer);
+procedure TTreeViewItem.PreparePositionsForExpandAnimation(AHorzDelta, AVertDelta: Integer);
 var
   ItemIndex: Integer;
   Item: TTreeViewItem;
@@ -1769,12 +1777,12 @@ begin
   for ItemIndex := 0 to Count - 1 do
     begin
       Item := Items[ItemIndex];
-      Item.FPrevLeft := Item.FLeft;
-      Item.FPrevTop := Item.FTop + ADelta;
+      Item.FPrevLeft := Item.FLeft + AHorzDelta;
+      Item.FPrevTop := Item.FTop + AVertDelta;
     end;
 end;
 
-procedure TTreeViewItem.PreparePositionsForCollapseAnimation(ADelta: Integer);
+procedure TTreeViewItem.PreparePositionsForCollapseAnimation(AHorzDelta, AVertDelta: Integer);
 var
   ItemIndex: Integer;
   Item: TTreeViewItem;
@@ -1782,8 +1790,8 @@ begin
   for ItemIndex := 0 to Count - 1 do
     begin
       Item := Items[ItemIndex];
-      Item.FLeft := Item.FPrevLeft;
-      Item.FTop := Item.FPrevTop + ADelta;
+      Item.FLeft := Item.FPrevLeft + AHorzDelta;
+      Item.FTop := Item.FPrevTop + AVertDelta;
     end;
 end;
 
@@ -1985,26 +1993,58 @@ procedure TTreeViewItem.PaintConnector(ADC: HDC; AGdiCache: TGdiCache; AIndex: I
 var
   Points: packed array[0..3] of TPoint;
 begin
-  Points[0].X := Right;
-  Points[3].X := ADest.Left;
-  if Self = TreeView.AnimationExpandItem then
-    Points[3].X := TreeView.CalcAnimation(Points[0].X, Points[3].X)
-  else
-    if Self = TreeView.AnimationCollapseItem then
-      Points[3].X := TreeView.CalcAnimation(Points[3].X, Points[0].X);
-  Points[1].X := Points[0].X + (Points[3].X - Points[0].X) div 2;
-  Points[2].X := Points[1].X;
+  if TreeView.VertDirection then
+    begin
+      if TreeView.InvertDirection then
+        begin
+          Points[0].Y := Top;
+          Points[3].Y := ADest.Bottom;
+        end
+      else
+        begin
+          Points[0].Y := Bottom;
+          Points[3].Y := ADest.Top;
+        end;
+      if Self = TreeView.AnimationExpandItem then
+        Points[3].Y := TreeView.CalcAnimation(Points[0].Y, Points[3].Y)
+      else
+        if Self = TreeView.AnimationCollapseItem then
+          Points[3].Y := TreeView.CalcAnimation(Points[3].Y, Points[0].Y);
+      Points[1].Y := Points[0].Y + (Points[3].Y - Points[0].Y) div 2;
+      Points[2].Y := Points[1].Y;
 
-  Points[0].Y := Top + Round((Height / (Count + 1)) * (AIndex + 1));
-  Points[3].Y := ADest.Top + Round(ADest.Height / 2);
-  if Self = TreeView.AnimationExpandItem then
-    Points[3].Y := TreeView.CalcAnimation(Points[0].Y, Points[3].Y)
+      Points[0].X := Left + Round((Width / (Count + 1)) * (AIndex + 1));
+      Points[3].X := ADest.Left + Round(ADest.Width / 2);
+      if Self = TreeView.AnimationExpandItem then
+        Points[3].X := TreeView.CalcAnimation(Points[0].X, Points[3].X)
+      else
+        if Self = TreeView.AnimationCollapseItem then
+          Points[3].X := TreeView.CalcAnimation(Points[3].X, Points[0].X);
+      Points[1].X := Points[0].X;
+      Points[2].X := Points[3].X;
+    end
   else
-    if Self = TreeView.AnimationCollapseItem then
-      Points[3].Y := TreeView.CalcAnimation(Points[3].Y, Points[0].Y);
-  Points[1].Y := Points[0].Y;
-  Points[2].Y := Points[3].Y;
+    begin
+      Points[0].X := Right;
+      Points[3].X := ADest.Left;
+      if Self = TreeView.AnimationExpandItem then
+        Points[3].X := TreeView.CalcAnimation(Points[0].X, Points[3].X)
+      else
+        if Self = TreeView.AnimationCollapseItem then
+          Points[3].X := TreeView.CalcAnimation(Points[3].X, Points[0].X);
+      Points[1].X := Points[0].X + (Points[3].X - Points[0].X) div 2;
+      Points[2].X := Points[1].X;
 
+      Points[0].Y := Top + Round((Height / (Count + 1)) * (AIndex + 1));
+      Points[3].Y := ADest.Top + Round(ADest.Height / 2);
+      if Self = TreeView.AnimationExpandItem then
+        Points[3].Y := TreeView.CalcAnimation(Points[0].Y, Points[3].Y)
+      else
+        if Self = TreeView.AnimationCollapseItem then
+          Points[3].Y := TreeView.CalcAnimation(Points[3].Y, Points[0].Y);
+      Points[1].Y := Points[0].Y;
+      Points[2].Y := Points[3].Y;
+    end;
   FTreeView.PolyBezier(ADC, AGdiCache, Points, 4);
 end;
 
@@ -2017,16 +2057,42 @@ var
 begin
   if (Expanded or (Self = TreeView.AnimationExpandItem) or (Self = TreeView.AnimationCollapseItem)) and (Count > 0) then
     begin
-      ConnectorRect.Left := Right;
-      ConnectorRect.Right := ConnectorRect.Left + TreeView.HorzSpace;
-      ConnectorRect.Top := Top;
-      ConnectorRect.Bottom := Bottom;
+      if TreeView.VertDirection then
+        begin
+          if TreeView.InvertDirection then
+            begin
+              ConnectorRect.Bottom := Top;
+              ConnectorRect.Top := ConnectorRect.Top - TreeView.HorzSpace;
+            end
+          else
+            begin
+              ConnectorRect.Top := Bottom;
+              ConnectorRect.Bottom := ConnectorRect.Top + TreeView.HorzSpace;
+            end;
+          ConnectorRect.Left := Left;
+          ConnectorRect.Right := Right;
+        end
+      else
+        begin
+          ConnectorRect.Left := Right;
+          ConnectorRect.Right := ConnectorRect.Left + TreeView.HorzSpace;
+          ConnectorRect.Top := Top;
+          ConnectorRect.Bottom := Bottom;
+        end;
 
       for ItemIndex := 0 to Count - 1 do
         begin
           Item := Items[ItemIndex];
-          ConnectorRect.Top := Min(ConnectorRect.Top, Item.Top);
-          ConnectorRect.Bottom := Max(ConnectorRect.Bottom, Item.Bottom);
+          if TreeView.VertDirection then
+            begin
+              ConnectorRect.Left := Min(ConnectorRect.Left, Item.Left);
+              ConnectorRect.Right := Max(ConnectorRect.Right, Item.Right);
+            end
+          else
+            begin
+              ConnectorRect.Top := Min(ConnectorRect.Top, Item.Top);
+              ConnectorRect.Bottom := Max(ConnectorRect.Bottom, Item.Bottom);
+            end;
         end;
 
       if RectInRegion(AUpdateRgn, ConnectorRect) then
@@ -2051,16 +2117,34 @@ var
 begin
   if (Expanded or (Self = TreeView.AnimationExpandItem) or (Self = TreeView.AnimationCollapseItem)) and (Count > 0) then
     begin
-      ConnectorRect.Left := Right;
-      ConnectorRect.Right := ConnectorRect.Left + TreeView.HorzSpace;
-      ConnectorRect.Top := Top;
-      ConnectorRect.Bottom := Bottom;
+      if TreeView.VertDirection then
+        begin
+          ConnectorRect.Top := Bottom;
+          ConnectorRect.Bottom := ConnectorRect.Top + TreeView.HorzSpace;
+          ConnectorRect.Left := Left;
+          ConnectorRect.Right := Right;
+        end
+      else
+        begin
+          ConnectorRect.Left := Right;
+          ConnectorRect.Right := ConnectorRect.Left + TreeView.HorzSpace;
+          ConnectorRect.Top := Top;
+          ConnectorRect.Bottom := Bottom;
+        end;
 
       for ItemIndex := 0 to Count - 1 do
         begin
           Item := Items[ItemIndex];
-          ConnectorRect.Top := Min(ConnectorRect.Top, Item.Top);
-          ConnectorRect.Bottom := Max(ConnectorRect.Bottom, Item.Bottom);
+          if TreeView.VertDirection then
+            begin
+              ConnectorRect.Left := Min(ConnectorRect.Left, Item.Left);
+              ConnectorRect.Right := Max(ConnectorRect.Right, Item.Right);
+            end
+          else
+            begin
+              ConnectorRect.Top := Min(ConnectorRect.Top, Item.Top);
+              ConnectorRect.Bottom := Max(ConnectorRect.Bottom, Item.Bottom);
+            end;
         end;
 
       if RectInRegion(AUpdateRgn, ConnectorRect) then
@@ -2068,8 +2152,16 @@ begin
           for ItemIndex := 0 to Count - 1 do
             begin
               Item := Items[ItemIndex];
-              ConnectorRect.Top := Min(Top, Item.Top);
-              ConnectorRect.Bottom := Max(Bottom, Item.Bottom);
+              if TreeView.VertDirection then
+                begin
+                  ConnectorRect.Left := Min(Left, Item.Left);
+                  ConnectorRect.Right := Max(Right, Item.Right);
+                end
+              else
+                begin
+                  ConnectorRect.Top := Min(Top, Item.Top);
+                  ConnectorRect.Bottom := Max(Bottom, Item.Bottom);
+                end;
               if RectInRegion(AUpdateRgn, ConnectorRect) then
                 PaintConnector(ADC, AGdiCache, ItemIndex, Item);
             end;
@@ -2965,6 +3057,8 @@ begin
   FGroupSpace := 3;
   FIndent := 19;
   FItemHeight := 19;
+
+  FVertDirection := True;
 end;
 
 destructor TTreeView.Destroy;
@@ -3273,16 +3367,8 @@ begin
     if AClientWidth = 0 then exit;
     if AClientHeight = 0 then exit;
 
-    if AnimationMode = amNone then
-      begin
-        OptimalWidth := FOptimalWidth;
-        OptimalHeight := FOptimalHeight;
-      end
-    else
-      begin
-        OptimalWidth := CalcAnimation(FPrevOptimalWidth, FOptimalWidth);
-        OptimalHeight := CalcAnimation(FPrevOptimalHeight, FOptimalHeight);
-      end;
+    OptimalWidth := Self.OptimalWidth;
+    OptimalHeight := Self.OptimalHeight;
 
     NeedVertScrollBar := OptimalHeight > AClientHeight;
     if not NoScroll and NeedVertScrollBar then
@@ -3449,7 +3535,6 @@ end;
 procedure TTreeView.CalcBaseOffsets(var AXOffset, AYOffset: Integer);
 var
   ClientRect: TRect;
-  Optimal: Integer;
 begin
   GetClientRect(FHandle, ClientRect);
 
@@ -3457,13 +3542,7 @@ begin
     AXOffset := -GetScrollPos(SB_HORZ)
   else
     if AutoCenter then
-      begin
-        if AnimationMode <> amNone then
-          Optimal := CalcAnimation(FPrevOptimalWidth, FOptimalWidth)
-        else
-          Optimal := FOptimalWidth;
-        AXOffset := (ClientRect.Right - ClientRect.Left - Optimal) div 2
-      end
+      AXOffset := (ClientRect.Right - ClientRect.Left - OptimalWidth) div 2
     else
       AXOffset := 0;
 
@@ -3471,13 +3550,7 @@ begin
     AYOffset := -GetScrollPos(SB_VERT)
   else
     if AutoCenter then
-      begin
-        if AnimationMode <> amNone then
-          Optimal := CalcAnimation(FPrevOptimalHeight, FOptimalHeight)
-        else
-          Optimal := FOptimalHeight;
-        AYOffset := (ClientRect.Bottom - ClientRect.Top - Optimal) div 2
-      end
+      AYOffset := (ClientRect.Bottom - ClientRect.Top - OptimalHeight) div 2
     else
       AYOffset := 0;
 end;
@@ -3497,6 +3570,22 @@ var
 begin
   CalcBaseOffsets(XOffset, YOffset);
   OffsetRect(ARect, XOffset, YOffset);
+end;
+
+function TTreeView.GetOptimalWidth: Integer;
+begin
+  if AnimationMode = amNone then
+    Result := FOptimalWidth
+  else
+    Result := CalcAnimation(FPrevOptimalWidth, FOptimalWidth);
+end;
+
+function TTreeView.GetOptimalHeight: Integer;
+begin
+  if AnimationMode = amNone then
+    Result := FOptimalHeight
+  else
+    Result := CalcAnimation(FPrevOptimalHeight, FOptimalHeight);
 end;
 
 function TTreeView.SendDrawNotify(ADC: HDC; AStage: UINT; var ANMTVCustomDraw: TNMTVCustomDraw): UINT;
@@ -3538,14 +3627,38 @@ procedure TTreeView.PaintRootConnector(ADC: HDC; AGdiCache: TGdiCache; ASource, 
 var
   Points: packed array[0..3] of TPoint;
 begin
-  Points[0].X := HorzSpace div 2;
-  Points[0].Y := ASource.Top + ASource.Height div 2;
-  Points[1].X := Points[0].X - HorzSpace div 2;
-  Points[1].Y := Points[0].Y;
-  Points[3].X := ADest.Left;
-  Points[3].Y := ADest.Top + ADest.Height div 2;
-  Points[2].X := Points[3].X - HorzSpace div 2;
-  Points[2].Y := Points[3].Y;
+  if VertDirection then
+    begin
+      Points[0].X := ASource.Left + ASource.Width div 2;
+      Points[1].X := Points[0].X;
+      Points[3].X := ADest.Left + ADest.Width div 2;
+      Points[2].X := Points[3].X;
+      if InvertDirection then
+        begin
+          Points[0].Y := OptimalHeight - HorzSpace div 2;
+          Points[1].Y := OptimalHeight;
+        end
+      else
+        begin
+          Points[0].Y := HorzSpace div 2;
+          Points[1].Y := 0;
+        end;
+      Points[2].Y := Points[1].Y;
+      Points[3].Y := Points[0].Y;
+    end
+  else
+    begin
+      Points[0].X := HorzSpace div 2;
+      Points[1].X := 0;
+      Points[3].X := Points[0].X;
+      Points[2].X := 0;
+
+      Points[0].Y := ASource.Top + ASource.Height div 2;
+      Points[1].Y := Points[0].Y;
+      Points[3].Y := ADest.Top + ADest.Height div 2;
+      Points[2].Y := Points[3].Y;
+    end;
+
   PolyBezier(ADC, AGdiCache, Points, 4);
 end;
 
@@ -3556,10 +3669,29 @@ var
 begin
   if not LinesAsRoot or (Count = 0) then Exit;
 
-  ConnectorRect.Left := 0;
-  ConnectorRect.Top := Items[0].Top;
-  ConnectorRect.Right := HorzSpace div 2;
-  ConnectorRect.Bottom := Items[Count - 1].Bottom;
+  if VertDirection then
+    begin
+      ConnectorRect.Left := Items[0].Left;
+      ConnectorRect.Right := Items[Count - 1].Right;
+      if InvertDirection then
+        begin
+          ConnectorRect.Top := OptimalHeight - HorzSpace div 2;
+          ConnectorRect.Bottom := OptimalHeight;
+        end
+      else
+        begin
+          ConnectorRect.Top := 0;
+          ConnectorRect.Bottom := HorzSpace div 2;
+        end
+    end
+  else
+    begin
+      ConnectorRect.Left := 0;
+      ConnectorRect.Top := Items[0].Top;
+      ConnectorRect.Right := HorzSpace div 2;
+      ConnectorRect.Bottom := Items[Count - 1].Bottom;
+    end;
+
   if RectInRegion(AUpdateRgn, ConnectorRect) then
     begin
       FillRect(ADC, ConnectorRect, AGdiCache.ColorBrush);
@@ -3576,16 +3708,43 @@ var
 begin
   if not LinesAsRoot or (Count = 0) then Exit;
 
-  ConnectorRect.Left := 0;
-  ConnectorRect.Top := Items[0].Top;
-  ConnectorRect.Right := HorzSpace div 2;
-  ConnectorRect.Bottom := Items[Count - 1].Bottom;
+  if VertDirection then
+    begin
+      ConnectorRect.Left := Items[0].Left;
+      ConnectorRect.Right := Items[Count - 1].Right;
+      if InvertDirection then
+        begin
+          ConnectorRect.Top := OptimalHeight - HorzSpace div 2;
+          ConnectorRect.Bottom := OptimalHeight;
+        end
+      else
+        begin
+          ConnectorRect.Top := 0;
+          ConnectorRect.Bottom := HorzSpace div 2;
+        end
+    end
+  else
+    begin
+      ConnectorRect.Left := 0;
+      ConnectorRect.Top := Items[0].Top;
+      ConnectorRect.Right := HorzSpace div 2;
+      ConnectorRect.Bottom := Items[Count - 1].Bottom;
+    end;
+
   if RectInRegion(AUpdateRgn, ConnectorRect) then
     begin
       for ItemIndex := 0 to Count - 2 do
         begin
-          ConnectorRect.Top := Items[ItemIndex].Top;
-          ConnectorRect.Bottom := Items[ItemIndex + 1].Bottom;
+          if VertDirection then
+            begin
+              ConnectorRect.Left := Items[ItemIndex].Left;
+              ConnectorRect.Right := Items[ItemIndex + 1].Right;
+            end
+          else
+            begin
+              ConnectorRect.Top := Items[ItemIndex].Top;
+              ConnectorRect.Bottom := Items[ItemIndex + 1].Bottom;
+            end;
           if RectInRegion(AUpdateRgn, ConnectorRect) then
             PaintRootConnector(ADC, AGdiCache, Items[ItemIndex], Items[ItemIndex + 1]);
         end;
@@ -3923,8 +4082,9 @@ var
 
 var
   EnableAnimation: BOOL;
-  PrevCenter, NewCenter: Integer;
-  Delta: Integer;
+  PrevHorzCenter, NewHorzCenter: Integer;
+  PrevVertCenter, NewVertCenter: Integer;
+  HorzDelta, VertDelta: Integer;
   ItemIndex: Integer;
   NextFrameTime: Cardinal;
   SleepTime: Integer;
@@ -3947,27 +4107,36 @@ begin
 
         if AutoCenter then
           begin
-            PrevCenter := FOptimalHeight div 2;
+            PrevHorzCenter := FOptimalWidth div 2;
+            PrevVertCenter := FOptimalHeight div 2;
             DoUpdate2;
-            NewCenter := FOptimalHeight div 2;
+            NewHorzCenter := FOptimalWidth div 2;
+            NewVertCenter := FOptimalHeight div 2;
+            HorzDelta := NewHorzCenter - PrevHorzCenter;
+            VertDelta := NewVertCenter - PrevVertCenter;
             if Assigned(AExpandItem) then
               begin
-                Delta := NewCenter - PrevCenter;
-                AExpandItem.PreparePositionsForExpandAnimation(-Delta);
+                {if VertDirection then
+                  AExpandItem.PreparePositionsFortExpandAnimation(-Delta)
+                else}
+                  AExpandItem.PreparePositionsForExpandAnimation(-HorzDelta, -VertDelta);
               end;
             if Assigned(ACollapseItem) then
               begin
-                Delta := NewCenter - PrevCenter;
-                ACollapseItem.PreparePositionsForCollapseAnimation(Delta);
+                {Delta := NewCenter - PrevCenter;
+                if VertDirection then
+                  ACollapseItem.PreparePositionsForVertCollapseAnimation(Delta)
+                else}
+                  ACollapseItem.PreparePositionsForCollapseAnimation(HorzDelta, VertDelta);
               end;
           end
         else
           begin
             DoUpdate2;
             if Assigned(AExpandItem) then
-              AExpandItem.PreparePositionsForExpandAnimation(0);
+              AExpandItem.PreparePositionsForExpandAnimation(0, 0);
             if Assigned(ACollapseItem) then
-              ACollapseItem.PreparePositionsForCollapseAnimation(0);
+              ACollapseItem.PreparePositionsForCollapseAnimation(0, 0);
           end;
       end
     else
@@ -5101,7 +5270,7 @@ type
     procedure Pop;
     function ValidRect(const AItemRect: TRect): Boolean;
     function FindTop(AItemRect: TRect): Integer;
-    //function FindTop2(ARegion: HRGN): Integer;
+    function FindLeft(AItemRect: TRect): Integer;
   end;
 
 destructor TRegions.Destroy;
@@ -5163,6 +5332,29 @@ begin
   Result := AItemRect.Top;
 end;
 
+function TRegions.FindLeft(AItemRect: TRect): Integer;
+var
+  Delta: Integer;
+begin
+  Delta := 0;
+  while True do
+    begin
+      if ValidRect(AItemRect) then Break;
+      if Delta = 0 then Delta := 1
+                   else Delta := Delta * 2;
+      OffsetRect(AItemRect, Delta, 0);
+    end;
+  while Delta > 0 do
+    begin
+      OffsetRect(AItemRect, -Delta, 0);
+      if not ValidRect(AItemRect) then
+        OffsetRect(AItemRect, Delta, 0);
+      Delta := Delta div 2;
+    end;
+  Result := AItemRect.Left;
+end;
+
+
 {$IFDEF DEBUG}
 procedure TestRegionsFind;
 var
@@ -5195,7 +5387,7 @@ begin
 end;
 {$ENDIF}
 
-function GetBoundsRectEx(AItem: TTreeViewItem; AHorzSpace, AVertSpace, AGroupSpace: Integer): TRect; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+function GetHorzBoundsRectEx(AItem: TTreeViewItem; AHorzSpace, AVertSpace, AGroupSpace: Integer): TRect; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
 begin
   Result.Left := AItem.FLeft;
   Result.Top := AItem.FTop;
@@ -5205,7 +5397,7 @@ begin
     Inc(Result.Bottom, AGroupSpace);
 end;
 
-procedure CreateChildsRegion(AItem: TTreeViewItem; ARgn: HRGN; AHorzSpace, AVertSpace, AGroupSpace: Integer);
+procedure CreateHorzChildsRegion(AItem: TTreeViewItem; ARgn: HRGN; AHorzSpace, AVertSpace, AGroupSpace: Integer);
 var
   ItemIndex: Integer;
   Item: TTreeViewItem;
@@ -5215,13 +5407,43 @@ begin
   for ItemIndex := 0 to AItem.Count - 1 do
     begin
       Item := AItem.Items[ItemIndex];
-      ItemRect := GetBoundsRectEx(Item, AHorzSpace, AVertSpace, AGroupSpace);
+      ItemRect := GetHorzBoundsRectEx(Item, AHorzSpace, AVertSpace, AGroupSpace);
       ItemRect.Top := Min(0, ItemRect.Top);
       ItemRegion := CreateRectRgnIndirect(ItemRect);
       CombineRgn(ARgn, ARgn, ItemRegion, RGN_OR);
       DeleteObject(ItemRegion);
       if Item.Expanded and (Item.Count > 0) then
-        CreateChildsRegion(Item, ARgn, AHorzSpace, AVertSpace, AGroupSpace);
+        CreateHorzChildsRegion(Item, ARgn, AHorzSpace, AVertSpace, AGroupSpace);
+    end;
+end;
+
+function GetVertBoundsRectEx(AItem: TTreeViewItem; AHorzSpace, AVertSpace, AGroupSpace: Integer): TRect; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+begin
+  Result.Left := AItem.FLeft;
+  Result.Top := AItem.FTop;
+  Result.Right := AItem.FLeft + AItem.FWidth + AHorzSpace;
+  Result.Bottom := AItem.FTop + AItem.FHeight + AVertSpace;
+  if AItem.FIndex = AItem.ParentItems.Count - 1 then
+    Inc(Result.Right, AGroupSpace);
+end;
+
+procedure CreateVertChildsRegion(AItem: TTreeViewItem; ARgn: HRGN; AHorzSpace, AVertSpace, AGroupSpace: Integer);
+var
+  ItemIndex: Integer;
+  Item: TTreeViewItem;
+  ItemRect: TRect;
+  ItemRegion: HRGN;
+begin
+  for ItemIndex := 0 to AItem.Count - 1 do
+    begin
+      Item := AItem.Items[ItemIndex];
+      ItemRect := GetVertBoundsRectEx(Item, AHorzSpace, AVertSpace, AGroupSpace);
+      ItemRect.Left := Min(0, ItemRect.Left);
+      ItemRegion := CreateRectRgnIndirect(ItemRect);
+      CombineRgn(ARgn, ARgn, ItemRegion, RGN_OR);
+      DeleteObject(ItemRegion);
+      if Item.Expanded and (Item.Count > 0) then
+        CreateVertChildsRegion(Item, ARgn, AHorzSpace, AVertSpace, AGroupSpace);
     end;
 end;
 
@@ -5233,6 +5455,7 @@ begin
   for ItemIndex := 0 to AItem.Count - 1 do
     begin
       Item := AItem.Items[ItemIndex];
+      Inc(Item.FMinLeft, AXOffset);
       Inc(Item.FLeft, AXOffset);
       Inc(Item.FMinTop, AYOffset);
       Inc(Item.FTop, AYOffset);
@@ -5241,7 +5464,7 @@ begin
     end;
 end;
 
-procedure DoUpdate2Iterate(ARegions: TRegions; AItem: TTreeViewItem; AX, AY,
+procedure DoUpdateHorzIterate(ARegions: TRegions; AItem: TTreeViewItem; AX, AY,
   AHorzSpace, AVertSpace, AGroupSpace: Integer; ARegion: HRGN
   {$IFDEF DEBUG}; AWnd: HWND; ADC: HDC; ASaveXOffset, ASaveYOffset: Integer{$ENDIF});
 var
@@ -5290,7 +5513,7 @@ begin
       for ItemIndex := 0 to AItem.Count - 1 do
         begin
           Item := AItem.Items[ItemIndex];
-          DoUpdate2Iterate(ARegions, Item, AX, Y, AHorzSpace, AVertSpace, AGroupSpace, ChildsRegion
+          DoUpdateHorzIterate(ARegions, Item, AX, Y, AHorzSpace, AVertSpace, AGroupSpace, ChildsRegion
             {$IFDEF DEBUG}, AWnd, ADC, ASaveXOffset, ASaveYOffset{$ENDIF});
           Y := Item.FTop + Item.FHeight + AVertSpace;
         end;
@@ -5317,7 +5540,7 @@ begin
     end;
 
   StartTop := AItem.FTop;
-  AItem.FTop := ARegions.FindTop(GetBoundsRectEx(AItem, AHorzSpace, AVertSpace, AGroupSpace));
+  AItem.FTop := ARegions.FindTop(GetHorzBoundsRectEx(AItem, AHorzSpace, AVertSpace, AGroupSpace));
   if (ChildsRegion <> 0) and (AItem.FTop <> StartTop) then
     begin
       Inc(MoveDelta, AItem.FTop - StartTop);
@@ -5377,7 +5600,7 @@ begin
           end;
     end;
 
-  R := GetBoundsRectEx(AItem, AHorzSpace, AVertSpace, AGroupSpace);
+  R := GetHorzBoundsRectEx(AItem, AHorzSpace, AVertSpace, AGroupSpace);
   R.Top := 0;
   Temp := CreateRectRgnIndirect(R);
   CombineRgn(ARegion, ARegion, Temp, RGN_OR);
@@ -5388,7 +5611,185 @@ begin
           MoveChilds(AItem, 0, MoveDelta);
           ARegions.Pop;
           ChildsRegion := ARegions.Push;
-          CreateChildsRegion(AItem, ChildsRegion, AHorzSpace, AVertSpace, AGroupSpace);
+          CreateHorzChildsRegion(AItem, ChildsRegion, AHorzSpace, AVertSpace, AGroupSpace);
+        end;
+      CombineRgn(ARegion, ARegion, ChildsRegion, RGN_OR);
+      ARegions.Pop;
+    end;
+  DeleteObject(Temp);
+  {$IFDEF DEBUG}
+  {GetClientRect(AWnd, R);
+  FillRectWithColor(ADC, R, $FFFFFF);
+  for RegionIndex := 0 to ARegions.RegionCount - 1 do
+    begin
+      OffsetRgn(ARegions.Regions[RegionIndex], ASaveXOffset, ASaveYOffset);
+      FillRgnWithColor(ADC, ARegions.Regions[RegionIndex], $0000FF);
+      OffsetRgn(ARegions.Regions[RegionIndex], -ASaveXOffset, -ASaveYOffset);
+    end;}
+  {OffsetRgn(ARegion, ASaveXOffset, ASaveYOffset);
+  //FillRgnWithColor(ADC, ARegion, $0000FF);
+  Brush := CreateSolidBrush(0);
+  FrameRgn(ADC, ARegion, Brush, 1, 1);
+  DeleteObject(Brush);
+  OffsetRgn(ARegion, -ASaveXOffset, -ASaveYOffset);
+  R := AItem.BoundsRect;
+  OffsetRect(R, ASaveXOffset, ASaveYOffset);
+  //FillRectWithColor(ADC, R, $FF0000);}
+
+ { R := AItem.BoundsRectEx;
+  OffsetRect(R, ASaveXOffset, ASaveYOffset);
+  FillRectWithColor(ADC, R, $FF0000);}
+  {$ENDIF}
+end;
+
+procedure DoUpdateVertIterate(ARegions: TRegions; AItem: TTreeViewItem; AX, AY,
+  AHorzSpace, AVertSpace, AGroupSpace: Integer; ARegion: HRGN
+  {$IFDEF DEBUG}; AWnd: HWND; ADC: HDC; ASaveXOffset, ASaveYOffset: Integer{$ENDIF});
+var
+  ItemIndex: Integer;
+  Item: TTreeViewItem;
+  Item2: TTreeViewItem;
+  MinX, MaxX: Integer;
+  X: Integer;
+  ChildsRegion: HRGN;
+  NeedRebuildChildsRegion: Boolean;
+  MoveDelta: Integer;
+  StartLeft: Integer;
+  Temp: HRGN;
+  R: TRect;
+  CorrectCount: Integer;
+  CorrectIndex: Integer;
+  FreeSpace: Integer;
+  MaxCorrectLeft: Integer;
+  NextLeft: Double;
+  ItemSpace: Double;
+  ItemsWidth: Integer;
+  {$IFDEF DEBUG}
+  //RegionIndex: Integer;
+  //Brush: HBRUSH;
+  ItemText: UnicodeString;
+  {$ENDIF}
+begin
+  {$IFDEF DEBUG}
+  {R := AItem.BoundsRect;
+  OffsetRect(R, ASaveXOffset, ASaveYOffset);
+  FillRectWithColor(ADC, R, $00FF00);;}
+  ItemText := AItem.Text;
+  {$ENDIF}
+
+  AItem.FLeft := AX;
+  AItem.FTop := AY;
+  Inc(AY, AItem.FHeight + AVertSpace);
+  if AItem.Expanded and (AItem.Count > 0) then ChildsRegion := ARegions.Push
+                                          else ChildsRegion := 0;
+  NeedRebuildChildsRegion := False;
+  MoveDelta := 0;
+
+  if ChildsRegion <> 0 then
+    begin
+      X := 0;
+      for ItemIndex := 0 to AItem.Count - 1 do
+        begin
+          Item := AItem.Items[ItemIndex];
+          DoUpdateVertIterate(ARegions, Item, X, AY, AHorzSpace, AVertSpace, AGroupSpace, ChildsRegion
+            {$IFDEF DEBUG}, AWnd, ADC, ASaveXOffset, ASaveYOffset{$ENDIF});
+          X := Item.FLeft + Item.FWidth + AHorzSpace;
+        end;
+
+      Item := AItem.Items[0];
+      MinX := Item.FLeft;
+      Item := AItem.Items[AItem.Count - 1];
+      MaxX := Item.FLeft + Item.FWidth;
+      X := MinX + (MaxX - MinX) div 2 - AItem.FWidth div 2;
+      if (X > AX) and (MinX = 0) then
+        begin
+          Inc(MoveDelta, AX - X);
+          NeedRebuildChildsRegion := True;
+          X := AX;
+        end
+      else
+        if X < AX then
+          begin
+            Inc(MoveDelta, AX - X);
+            NeedRebuildChildsRegion := True;
+            X := AX;
+          end;
+      AItem.FLeft := X;
+    end;
+
+  StartLeft := AItem.FLeft;
+  AItem.FLeft := ARegions.FindLeft(GetVertBoundsRectEx(AItem, AHorzSpace, AVertSpace, AGroupSpace));
+  if (ChildsRegion <> 0) and (AItem.FLeft <> StartLeft) then
+    begin
+      Inc(MoveDelta, AItem.FLeft - StartLeft);
+      NeedRebuildChildsRegion := True;
+    end;
+
+  AItem.FMinLeft := AItem.FLeft;
+
+  if AItem.FIndex = AItem.ParentItems.Count - 1 then
+    begin
+      CorrectCount := 0;
+      for ItemIndex := AItem.FIndex - 1 downto 0 do
+        begin
+          Item := AItem.ParentItems.Items[ItemIndex];
+          if (Item.FHeight <= AItem.FHeight) and not Item.Expanded then
+            Inc(CorrectCount)
+          else
+            if CorrectCount > 0 then
+              begin
+                ItemsWidth := 0;
+                for CorrectIndex := ItemIndex + 1 to ItemIndex + CorrectCount do
+                  Inc(ItemsWidth, AItem.ParentItems.Items[CorrectIndex].FWidth);
+
+                MaxCorrectLeft := AItem.ParentItems.Items[ItemIndex + CorrectCount + 1].FLeft;
+                NextLeft := Item.FLeft + Item.FWidth;
+                FreeSpace := MaxCorrectLeft - (Item.FLeft + Item.FWidth);
+                ItemSpace := (FreeSpace - ItemsWidth) / (CorrectCount + 1);
+
+                for CorrectIndex := ItemIndex + 1 to ItemIndex + CorrectCount do
+                  begin
+                    Item := AItem.ParentItems.Items[CorrectIndex];
+                    Item.FLeft := Round(NextLeft + ItemSpace);
+
+                    Dec(ItemsWidth, Item.FWidth);
+                    Dec(CorrectCount);
+
+                    if Item.FLeft < Item.FMinLeft then
+                      begin
+                        Item.FLeft := Item.FMinLeft;
+                        NextLeft := Item.FLeft + Item.FWidth;
+                        FreeSpace := MaxCorrectLeft - (Item.FLeft + Item.FWidth);
+                        ItemSpace := (FreeSpace - ItemsWidth) / (CorrectCount + 1);
+                      end
+                    else
+                      NextLeft := NextLeft + Item.FWidth + ItemSpace;
+                  end;
+
+                //CorrectCount := 0;
+              end;
+        end;
+      if CorrectCount > 0 then
+        for ItemIndex := CorrectCount - 1 downto 0 do
+          begin
+            Item := AItem.ParentItems.Items[ItemIndex];
+            Item2 := AItem.ParentItems.Items[ItemIndex + 1];
+            Item.FLeft := Item2.FLeft - AHorzSpace - Item.FWidth;
+          end;
+    end;
+
+  R := GetVertBoundsRectEx(AItem, AHorzSpace, AVertSpace, AGroupSpace);
+  R.Left := 0;
+  Temp := CreateRectRgnIndirect(R);
+  CombineRgn(ARegion, ARegion, Temp, RGN_OR);
+  if ChildsRegion <> 0 then
+    begin
+      if NeedRebuildChildsRegion then
+        begin
+          MoveChilds(AItem, MoveDelta, 0);
+          ARegions.Pop;
+          ChildsRegion := ARegions.Push;
+          CreateVertChildsRegion(AItem, ChildsRegion, AHorzSpace, AVertSpace, AGroupSpace);
         end;
       CombineRgn(ARegion, ARegion, ChildsRegion, RGN_OR);
       ARegions.Pop;
@@ -5432,6 +5833,16 @@ begin
       UpdateOptimalSize(AItem.Items[ItemIndex], ALeft, ATop, ARight, AHeight);
 end;
 
+procedure DoVertInvert(ATreeView: TTreeView; AItem: TTreeViewItem);
+var
+  ItemIndex: Integer;
+begin
+  AItem.FTop := ATreeView.FOptimalHeight - AItem.FTop - AItem.FHeight;
+  if AItem.Expanded then
+    for ItemIndex := 0 to AItem.Count - 1 do
+      DoVertInvert(ATreeView, AItem.Items[ItemIndex]);
+end;
+
 function TTreeView.DoUpdate2: Boolean;
 var
   {$IFDEF DEBUG}
@@ -5472,9 +5883,11 @@ begin
           for ItemIndex := 0 to Count - 1 do
             Items[ItemIndex].UpdateSize(DC);
 
-          if (Count = 1) or not LinesAsRoot then XOffset := 0
-                                            else XOffset := HorzSpace div 2;
+          XOffset := 0;
           YOffset := 0;
+          if (Count > 1) and LinesAsRoot then
+            if VertDirection then YOffset := HorzSpace div 2
+                             else XOffset := HorzSpace div 2;
 
           Regions := TRegions.Create;
           try
@@ -5484,35 +5897,44 @@ begin
                 Item := Items[ItemIndex];
 
                 ChildsRegion := Regions.Push;
-                DoUpdate2Iterate(Regions, Item, XOffset, YOffset, HorzSpace, VertSpace, GroupSpace, ChildsRegion
+                if VertDirection then
+                  DoUpdateVertIterate(Regions, Item, XOffset, YOffset, VertSpace, HorzSpace, GroupSpace, ChildsRegion
+                  {$IFDEF DEBUG}, FHandle, DC, SaveXOffset, SaveYOffset{$ENDIF})
+                else
+                  DoUpdateHorzIterate(Regions, Item, XOffset, YOffset, HorzSpace, VertSpace, GroupSpace, ChildsRegion
                   {$IFDEF DEBUG}, FHandle, DC, SaveXOffset, SaveYOffset{$ENDIF});
                 CombineRgn(Region, Region, ChildsRegion, RGN_OR);
                 Regions.Pop;
 
-                YOffset := Item.FTop + Item.FHeight;
+                if VertDirection then XOffset := Item.FLeft + Item.FWidth
+                                 else YOffset := Item.FTop + Item.FHeight;
               end;
           finally
             Regions.Free;
           end;
-
-          Left := 0;
-          Top := 0;
-          for ItemIndex := 0 to Count - 1 do
-            UpdateOptimalSize(Items[ItemIndex], Left, Top, FOptimalWidth, FOptimalHeight);
-          if (Left < 0) or (Top < 0) then
-            begin
-              for ItemIndex := 0 to Count - 1 do
-                begin
-                  Items[ItemIndex].FLeft := Items[ItemIndex].FLeft - Left;
-                  Items[ItemIndex].FTop := Items[ItemIndex].FTop - Top;
-                  MoveChilds(Items[ItemIndex], -Left, -Top);
-                end;
-              Dec(FOptimalWidth, Left);
-              Dec(FOptimalHeight, Top);
-            end;
         finally
           ReleaseDC(FHandle, DC);
         end;
+
+      Left := 0;
+      Top := 0;
+      for ItemIndex := 0 to Count - 1 do
+        UpdateOptimalSize(Items[ItemIndex], Left, Top, FOptimalWidth, FOptimalHeight);
+      if (Left < 0) or (Top < 0) then
+        begin
+          for ItemIndex := 0 to Count - 1 do
+            begin
+              Items[ItemIndex].FLeft := Items[ItemIndex].FLeft - Left;
+              Items[ItemIndex].FTop := Items[ItemIndex].FTop - Top;
+              MoveChilds(Items[ItemIndex], -Left, -Top);
+            end;
+          Dec(FOptimalWidth, Left);
+          Dec(FOptimalHeight, Top);
+        end;
+
+      if VertDirection and InvertDirection then
+        for ItemIndex := 0 to Count - 1 do
+          DoVertInvert(Self, Items[ItemIndex]);
     end;
   Result := True;
 end;
@@ -6197,6 +6619,8 @@ procedure TTreeView.InitStyles2(AStyles2: UINT);
 begin
   FStyle2 := AStyles2;
   FAutoCenter := AStyles2 and TVS_EX_AUTOCENTER <> 0;
+  FVertDirection := AStyles2 and TVS_EX_VERTDIRECTION <> 0;
+  FInvertDirection := AStyles2 and TVS_EX_INVERTDIRECTION <> 0;
   UpdateCheckBoxes;
 end;
 
@@ -6271,6 +6695,8 @@ var
   NeedFullUpdate: Boolean;
   NeedInvalidate: Boolean;
   PrevAutoCenter: Boolean;
+  PrevInvertDirection: Boolean;
+  PrevVertDirection: Boolean;
   PrevCheckBoxes: Boolean;
 begin
   NeedUpdate := False;
@@ -6278,6 +6704,8 @@ begin
   NeedInvalidate := False;
 
   PrevAutoCenter := AutoCenter;
+  PrevInvertDirection := InvertDirection;
+  PrevVertDirection := VertDirection;
   PrevCheckBoxes := CheckBoxes;
 
   AStyle2 := (FStyle2 and not AMask) or (AStyle2 and AMask);
@@ -6285,6 +6713,11 @@ begin
 
   if AutoCenter <> PrevAutoCenter then
     NeedInvalidate := True;
+  if InvertDirection <> PrevInvertDirection then
+    NeedUpdate := True;
+  if VertDirection <> PrevVertDirection then
+    NeedUpdate := True;
+
   if CheckBoxes <> PrevCheckBoxes then
     begin
       if CheckBoxes then

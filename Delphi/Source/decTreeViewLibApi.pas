@@ -13,7 +13,9 @@ type
   HTHEME = THandle;
 
 const
-  TVS_EX_AUTOCENTER = $80000000; // Non standard
+  TVS_EX_AUTOCENTER      = $80000000; // Non standard
+  TVS_EX_VERTDIRECTION   = $40000000; // Non standard
+  TVS_EX_INVERTDIRECTION = $20000000; // Non standard
 
 const
   TVM_SETBORDER = TV_FIRST + 35;

@@ -22,6 +22,8 @@ type
   TExtraCheckboxesState = (ecsMixed, ecsDimmed, ecsExclusion);
   TExtraCheckboxesStates = set of TExtraCheckboxesState;
 
+  TTreeDirection = (tdLeftToRight, tdTopToBottom, tdBottomToTop);
+
   {$if CompilerVersion >= 23}
   [ComponentPlatformsAttribute(pidWin32 or pidWin64)]
   {$ifend}
@@ -45,6 +47,7 @@ type
   private
     FAlternativeView: Boolean;
     FAutoCenter: Boolean;
+    FDirection: TTreeDirection;
     FItemBorder: Integer;
     FHorzSpace: Integer;
     FVertSpace: Integer;
@@ -56,6 +59,7 @@ type
     FOnStateIconChanged: TTVStateIconChangedEvent;
     procedure SetAlternativeView(AAlternativeView: Boolean);
     procedure SetAutoCenter(AAutoCenter: Boolean);
+    procedure SetDirection(ADirection: TTreeDirection);
     procedure SetItemBorder(AItemBorder: Integer);
     procedure SetHorzSpace(AHorzSpace: Integer);
     procedure SetVertSpace(AVertSpace: Integer);
@@ -67,6 +71,7 @@ type
   published
     property AlternativeView: Boolean read FAlternativeView write SetAlternativeView default True;
     property AutoCenter: Boolean read FAutoCenter write SetAutoCenter default True;
+    property Direction: TTreeDirection read FDirection write SetDirection default tdLeftToRight;
     property ItemBorder: Integer read FItemBorder write SetItemBorder default 2;
     property HorzSpace: Integer read FHorzSpace write SetHorzSpace default 30;
     property VertSpace: Integer read FVertSpace write SetVertSpace default 10;
@@ -202,9 +207,14 @@ begin
   try
     if AlternativeView then
       begin
-        if AutoCenter then Style := TVS_EX_AUTOCENTER
-                      else Style := 0;
-        SendMessage(Handle, TVM_SETEXTENDEDSTYLE, Integer(TVS_EX_AUTOCENTER), Integer(Style));
+        Style := 0;
+        if AutoCenter then Style := Style or TVS_EX_AUTOCENTER;
+        case Direction of
+          tdTopToBottom: Style := Style or TVS_EX_VERTDIRECTION;
+          tdBottomToTop: Style := Style or TVS_EX_VERTDIRECTION or TVS_EX_INVERTDIRECTION;
+        end;
+        SendMessage(Handle, TVM_SETEXTENDEDSTYLE,
+          Integer(TVS_EX_AUTOCENTER or TVS_EX_VERTDIRECTION or TVS_EX_INVERTDIRECTION), Integer(Style));
         TreeView_SetBorder(Handle, TVSBF_XBORDER or TVSBF_YBORDER, FItemBorder, FItemBorder);
         TreeView_SetSpace(Handle, TVSBF_XSPACE or TVSBF_YSPACE, FHorzSpace, FVertSpace);
         TreeView_SetGroupSpace(Handle, FGroupSpace);
@@ -428,6 +438,24 @@ begin
   FAutoCenter := AAutoCenter;
   if HandleAllocated and AlternativeView then
     SetStyleEx(TVS_EX_AUTOCENTER, FAutoCenter);
+end;
+
+procedure TdecTreeView.SetDirection(ADirection: TTreeDirection);
+var
+  Style: UINT;
+begin
+  if FDirection = ADirection then Exit;
+  FDirection := ADirection;
+  if HandleAllocated and AlternativeView then
+    begin
+      Style := 0;
+      case Direction of
+        //tdLeftToRight: Style := 0;
+        tdTopToBottom: Style := TVS_EX_VERTDIRECTION;
+        tdBottomToTop: Style := TVS_EX_VERTDIRECTION or TVS_EX_INVERTDIRECTION;
+      end;
+      SendMessage(Handle, TVM_SETEXTENDEDSTYLE, TVS_EX_VERTDIRECTION or TVS_EX_INVERTDIRECTION, Style);
+    end;
 end;
 
 procedure TdecTreeView.SetItemBorder(AItemBorder: Integer);
