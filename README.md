@@ -3,6 +3,7 @@
 You can use decTreeView control to display a tree structure like this:
 
 ![decTreeView](https://raw.githubusercontent.com/DenisAnisimov/decTreeView/master/Img/decTreeView.png)
+![decTreeView](https://raw.githubusercontent.com/DenisAnisimov/decTreeView/master/Img/decTreeViewStyle.png)
 
 The decTreeView library is written in Delphi but can be used in almost any Windows project regardless of its programming language, provided that third-party DLLs can be used.
 
