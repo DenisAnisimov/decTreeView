@@ -326,6 +326,8 @@ begin
           ItemWidth := NMTVGetItemSize.nmcd.rc.Right;
           ItemHeight := NMTVGetItemSize.nmcd.rc.Bottom;
           GetNodeSize(Node, ItemWidth, ItemHeight);
+          if ItemWidth < 5 then ItemWidth := 5;
+          if ItemHeight < 5 then ItemHeight := 5;
           NMTVGetItemSize.nmcd.rc.Right := ItemWidth;
           NMTVGetItemSize.nmcd.rc.Bottom := ItemHeight;
           AMessage.Result := 1;
@@ -520,6 +522,8 @@ end;
 
 procedure TdecTreeView.SetItemBorder(AItemBorder: Integer);
 begin
+  if AItemBorder < 0 then
+    AItemBorder := 0;
   if FItemBorder = AItemBorder then Exit;
   FItemBorder := AItemBorder;
   if HandleAllocated and AlternativeView then
@@ -528,6 +532,8 @@ end;
 
 procedure TdecTreeView.SetHorzSpace(AHorzSpace: Integer);
 begin
+  if AHorzSpace < 0 then
+    AHorzSpace := 0;
   if FHorzSpace = AHorzSpace then Exit;
   FHorzSpace := AHorzSpace;
   if HandleAllocated and AlternativeView then
@@ -536,6 +542,8 @@ end;
 
 procedure TdecTreeView.SetVertSpace(AVertSpace: Integer);
 begin
+  if AVertSpace < 0 then
+    AVertSpace := 0;
   if FVertSpace = AVertSpace then Exit;
   FVertSpace := AVertSpace;
   if HandleAllocated and AlternativeView then
@@ -544,6 +552,8 @@ end;
 
 procedure TdecTreeView.SetGroupSpace(AGroupSpace: Integer);
 begin
+  if AGroupSpace < 0 then
+    AGroupSpace := 0;
   if FGroupSpace = AGroupSpace then Exit;
   FGroupSpace := AGroupSpace;
   if HandleAllocated and AlternativeView then

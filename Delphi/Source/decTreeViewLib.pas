@@ -1079,7 +1079,6 @@ type
     // Tooltip routines
     FToolTipWnd: HWND;
     FToolTipWndCreated: Boolean;
-    FTooltipWndOwner: Boolean;
     FNeedHoverToolTip: Boolean;
     FToolTipInfoTip: Boolean;
     FToolTipTextText: UnicodeString;
@@ -4470,6 +4469,41 @@ end;
 
 procedure TTreeView.SetToolTipItem(AToolTipItem: TTreeViewItem);
 
+  procedure AdjustToolTipRect;
+  const
+    MinBorder = 2;
+  var
+    SaveRect: TRect;
+    Border: Integer;
+  begin
+    SaveRect := FToolTipRect;
+    SendMessage(FToolTipWnd, TTM_ADJUSTRECT, 1, LPARAM(@FToolTipRect));
+
+    Border := SaveRect.Left - FToolTipRect.Left;
+    if Border < MinBorder then
+      begin
+        FToolTipRect.Left := SaveRect.Left - MinBorder;
+        OffsetRect(FToolTipIconRect, MinBorder - Border, 0);
+        OffsetRect(FToolTipTextRect, MinBorder - Border, 0);
+      end;
+
+    Border := SaveRect.Top - FToolTipRect.Top;
+    if Border < MinBorder then
+      begin
+        FToolTipRect.Top := SaveRect.Top - MinBorder;
+        OffsetRect(FToolTipIconRect, 0, MinBorder - Border);
+        OffsetRect(FToolTipTextRect, 0, MinBorder - Border);
+      end;
+
+    Border := FToolTipRect.Right - SaveRect.Right;
+    if Border < MinBorder then
+      FToolTipRect.Right := SaveRect.Right + MinBorder;
+
+    Border := FToolTipRect.Bottom - SaveRect.Bottom;
+    if Border < MinBorder then
+      FToolTipRect.Bottom := SaveRect.Bottom + MinBorder;
+  end;
+
   function PrepareInfoTip: Boolean;
   var
     NMTVGetInfoTip: TNMTVGetInfoTipW;
@@ -4505,14 +4539,13 @@ procedure TTreeView.SetToolTipItem(AToolTipItem: TTreeViewItem);
 
     DeltaX := FToolTipRect.Left;
     DeltaY := FToolTipRect.Top;
-    SendMessage(FToolTipWnd, TTM_ADJUSTRECT, 1, LPARAM(@FToolTipRect));
+    AdjustToolTipRect;
     DeltaX := DeltaX - FToolTipRect.Left;
     DeltaY := DeltaY - FToolTipRect.Top;
     Point.X := FToolTipRect.Left;
     Point.Y := FToolTipRect.Top;
     ClientToScreen(FHandle, Point);
-    OffsetRect(FToolTipRect, Point.X - FToolTipRect.Left, Point.Y - FToolTipRect.Top);
-    OffsetRect(FToolTipRect, DeltaX, DeltaY);
+    OffsetRect(FToolTipRect, Point.X - FToolTipRect.Left + DeltaX, Point.Y - FToolTipRect.Top + DeltaY);
     SendMessage(FToolTipWnd, TTM_TRACKPOSITION, 0, MakeLParam(Point.X, Point.Y));
   end;
 
@@ -4543,7 +4576,7 @@ procedure TTreeView.SetToolTipItem(AToolTipItem: TTreeViewItem);
     OffsetRect(FToolTipIconRect, -FToolTipRect.Left, -FToolTipRect.Top);
     OffsetRect(FToolTipTextRect, -FToolTipRect.Left, -FToolTipRect.Top);
 
-    SendMessage(FToolTipWnd, TTM_ADJUSTRECT, 1, LPARAM(@FToolTipRect));
+    AdjustToolTipRect;
     Point.X := FToolTipRect.Left;
     Point.Y := FToolTipRect.Top;
     ClientToScreen(FHandle, Point);
@@ -6774,7 +6807,7 @@ begin
       WM_DESTROY:
         begin
           FDestroying := True;
-          if (FToolTipWnd <> 0) and FTooltipWndOwner then
+          if FToolTipWnd <> 0 then
             DestroyWindow(FToolTipWnd);
           FToolTipWnd := 0;
           if Assigned(FItems) then
@@ -7068,7 +7101,10 @@ begin
           FToolTipWnd := AWParam;
         end;
       TVM_GETTOOLTIPS:
-        Result := FToolTipWnd;
+        begin
+          CreateTooltipWnd;
+          Result := FToolTipWnd;
+        end;
 
       WM_GETDLGCODE:
         Result := DLGC_WANTARROWS or DLGC_WANTCHARS;
