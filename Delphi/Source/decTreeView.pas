@@ -14,7 +14,14 @@ interface
 uses
   Windows, Messages, CommCtrl, Classes, Controls, ComCtrls, Forms {$IFDEF ENABLE_GDIPLUS}, GDIPlus{$ENDIF};
 
+{$if CompilerVersion > 20}
+  {$DEFINE HAS_ONHINT}
+{$ifend}
+
 type
+  {$IFNDEF HAS_ONHINT}
+  TTVHintEvent = procedure(Sender: TObject; const Node: TTreeNode; var Hint: string) of object;
+  {$ENDIF}
   TTVStateIconChangingEvent = procedure(Sender: TObject; Node: TTreeNode; var AllowChange: Boolean) of object;
   TTVStateIconChangedEvent = procedure(Sender: TObject; Node: TTreeNode) of object;
   TTVGetNodeSizeEvent = procedure(Sender: TCustomTreeView; Node: TTreeNode; var ANodeWidth, ANodeHeight: Integer) of object;
@@ -24,7 +31,7 @@ type
 
   TTreeDirection = (tdLeftToRight, tdTopToBottom, tdBottomToTop);
 
-  {$if CompilerVersion >= 23}
+  {$if CompilerVersion >= 24}
   [ComponentPlatformsAttribute(pidWin32 or pidWin64)]
   {$ifend}
   TdecTreeView = class(TTreeView)
@@ -54,6 +61,10 @@ type
     FGroupSpace: Integer;
     FCheckboxes: Boolean;
     FExtraCheckboxesStates: TExtraCheckboxesStates;
+    FIntoTips: Boolean;
+    {$IFNDEF HAS_ONHINT}
+    FOnHint: TTVHintEvent;
+    {$ENDIF}
     FOnGetItemSize: TTVGetNodeSizeEvent;
     FOnStateIconChanging: TTVStateIconChangingEvent;
     FOnStateIconChanged: TTVStateIconChangedEvent;
@@ -68,6 +79,7 @@ type
     procedure SetCheckboxes(ACheckboxes: Boolean);
     procedure SetExtraCheckboxesStates(AExtraCheckboxesStates: TExtraCheckboxesStates);
     function IsSetExtraCheckboxesStates: Boolean;
+    procedure SetIntoTips(AIntoTips: Boolean);
   published
     property AlternativeView: Boolean read FAlternativeView write SetAlternativeView default True;
     property AutoCenter: Boolean read FAutoCenter write SetAutoCenter default True;
@@ -78,6 +90,10 @@ type
     property GroupSpace: Integer read FGroupSpace write SetGroupSpace default 3;
     property Checkboxes: Boolean read FCheckboxes write SetCheckboxes default False;
     property ExtraCheckboxesStates: TExtraCheckboxesStates read FExtraCheckboxesStates write SetExtraCheckboxesStates stored IsSetExtraCheckboxesStates;
+    property IntoTips: Boolean read FIntoTips write SetIntoTips default False;
+    {$IFNDEF HAS_ONHINT}
+    property OnHint: TTVHintEvent read FOnHint write FOnHint;
+    {$ENDIF}
     property OnGetItemSize: TTVGetNodeSizeEvent read FOnGetItemSize write FOnGetItemSize;
     property OnStateIconChanging: TTVStateIconChangingEvent read FOnStateIconChanging write FOnStateIconChanging;
     property OnStateIconChanged: TTVStateIconChangedEvent read FOnStateIconChanged write FOnStateIconChanged;
@@ -86,7 +102,8 @@ type
 implementation
 
 uses
-  SysUtils, ImgList, decTreeViewLibApi {$IFNDEF DLL_TEST_MODE}, decTreeViewLib{$ENDIF};
+  SysUtils, ImgList, decTreeViewLibApi {$IFNDEF DLL_TEST_MODE}, decTreeViewLib{$ENDIF}
+  {$IFDEF USE_LOGS}, decTreeViewLibLogs{$ENDIF};
 
 {$if CompilerVersion < 19}
 {$I decTreeViewFix.inc}
@@ -159,7 +176,8 @@ const
   HideSelections: array[Boolean] of DWORD = (TVS_SHOWSELALWAYS, 0);
   DragStyles: array[TDragMode] of DWORD = (TVS_DISABLEDRAGDROP, 0);
   RTLStyles: array[Boolean] of DWORD = (0, TVS_RTLREADING);
-  ToolTipStyles: array[Boolean] of DWORD = (TVS_NOTOOLTIPS, TVS_INFOTIP);
+  ToolTipStyles: array[Boolean] of DWORD = (TVS_NOTOOLTIPS, 0);
+  InfoTipStyles: array[Boolean] of DWORD = (0, TVS_INFOTIP);
   AutoExpandStyles: array[Boolean] of DWORD = (0, TVS_SINGLEEXPAND);
   HotTrackStyles: array[Boolean] of DWORD = (0, TVS_TRACKSELECT);
   RowSelectStyles: array[Boolean] of DWORD = (0, TVS_FULLROWSELECT);
@@ -183,7 +201,8 @@ begin
             RootStyles[ShowRoot] or ButtonStyles[ShowButtons] or
             EditStyles[ReadOnly] or HideSelections[HideSelection] or
             DragStyles[DragMode] or RTLStyles[UseRightToLeftReading] or
-            ToolTipStyles[ToolTips] or AutoExpandStyles[AutoExpand] or
+            ToolTipStyles[ToolTips] or InfoTipStyles[IntoTips] or
+            AutoExpandStyles[AutoExpand] or
             HotTrackStyles[HotTrack] or RowSelectStyles[RowSelect];
           if Ctl3D and NewStyleControls and (BorderStyle = bsSingle) then
             begin
@@ -292,55 +311,96 @@ var
   ItemWidth, ItemHeight: Integer;
   NMTVItemChange: PNMTVItemChange;
   AllowChange: Boolean;
+  NMTVGetInfoTip: PNMTVGetInfoTip;
+  InfoTip: string;
 begin
-  case AMessage.NMHdr.code of
-    TVN_GETITEMSIZE:
-      begin
-        NMTVGetItemSize := PNMTVGetItemSize(AMessage.NMHdr);
-        Node := TTreeNode(NMTVGetItemSize.nmcd.lItemlParam);
-        ItemWidth := NMTVGetItemSize.nmcd.rc.Right;
-        ItemHeight := NMTVGetItemSize.nmcd.rc.Bottom;
-        GetNodeSize(Node, ItemWidth, ItemHeight);
-        NMTVGetItemSize.nmcd.rc.Right := ItemWidth;
-        NMTVGetItemSize.nmcd.rc.Bottom := ItemHeight;
-        AMessage.Result := 1;
-      end;
-    TVN_ITEMCHANGING:
-      begin
-        AMessage.Result := 0;
-        if CanProcessItemChange and Assigned(FOnStateIconChanging) then
+  {$IFDEF USE_LOGS}
+  LogEnterTreeViewNotifyProc(AMessage);
+  try
+  {$ENDIF}
+    case AMessage.NMHdr.code of
+      TVN_GETITEMSIZE:
+        begin
+          NMTVGetItemSize := PNMTVGetItemSize(AMessage.NMHdr);
+          Node := TTreeNode(NMTVGetItemSize.nmcd.lItemlParam);
+          ItemWidth := NMTVGetItemSize.nmcd.rc.Right;
+          ItemHeight := NMTVGetItemSize.nmcd.rc.Bottom;
+          GetNodeSize(Node, ItemWidth, ItemHeight);
+          NMTVGetItemSize.nmcd.rc.Right := ItemWidth;
+          NMTVGetItemSize.nmcd.rc.Bottom := ItemHeight;
+          AMessage.Result := 1;
+        end;
+      TVN_ITEMCHANGING:
+        begin
+          AMessage.Result := 0;
+          if CanProcessItemChange and Assigned(FOnStateIconChanging) then
+            begin
+              NMTVItemChange := PNMTVItemChange(AMessage.NMHdr);
+              Node := TTreeNode(NMTVItemChange.lParam);
+              if Assigned(Node) then
+                if (NMTVItemChange.uStateNew and TVIS_STATEIMAGEMASK) <> (NMTVItemChange.uStateOld and TVIS_STATEIMAGEMASK) then
+                  begin
+                    AllowChange := True;
+                    FOnStateIconChanging(Self, Node, AllowChange);
+                    if not AllowChange then
+                      AMessage.Result := 1;
+                  end;
+            end;
+        end;
+      TVN_ITEMCHANGED:
+        begin
+          AMessage.Result := 0;
+          if CanProcessItemChange then
+            begin
+              NMTVItemChange := PNMTVItemChange(AMessage.NMHdr);
+              Node := TTreeNode(NMTVItemChange.lParam);
+              if Assigned(Node) then
+                if (NMTVItemChange.uStateNew and TVIS_STATEIMAGEMASK) <> (NMTVItemChange.uStateOld and TVIS_STATEIMAGEMASK) then
+                  begin
+                    Node.StateIndex := (NMTVItemChange.uStateNew and TVIS_STATEIMAGEMASK) shr 12;
+                    if Assigned(FOnStateIconChanged) then
+                      FOnStateIconChanged(Self, Node);
+                  end
+            end;
+        end;
+      TVN_GETINFOTIP:
+        if AlternativeView and Assigned(OnHint) then
           begin
-            NMTVItemChange := PNMTVItemChange(AMessage.NMHdr);
-            Node := TTreeNode(NMTVItemChange.lParam);
-            if Assigned(Node) then
-              if (NMTVItemChange.uStateNew and TVIS_STATEIMAGEMASK) <> (NMTVItemChange.uStateOld and TVIS_STATEIMAGEMASK) then
-                begin
-                  AllowChange := True;
-                  FOnStateIconChanging(Self, Node, AllowChange);
-                  if not AllowChange then
-                    AMessage.Result := 1;
-                end;
-          end;
-      end;
-    TVN_ITEMCHANGED:
+            NMTVGetInfoTip := PNMTVGetInfoTip(AMessage.NMHdr);
+            if NMTVGetInfoTip.cchTextMax > 1 then
+              begin
+                Node := TTreeNode(NMTVGetInfoTip.lParam);
+                if Assigned(Node) then
+                  begin
+                    InfoTip := Node.Text;
+                    OnHint(Self, Node, InfoTip);
+                    if InfoTip = Node.Text then
+                      InfoTip := '';
+                    if Length(InfoTip) >= NMTVGetInfoTip.cchTextMax then
+                      SetLength(InfoTip, NMTVGetInfoTip.cchTextMax);
+                    if InfoTip = '' then
+                      NMTVGetInfoTip.pszText^ := #0
+                    else
+                      CopyMemory(NMTVGetInfoTip.pszText, PChar(InfoTip), (Length(InfoTip) + 1) * SizeOf(Char));
+                  end;
+              end;
+          end
+        else
+          inherited;
+    else
+      inherited;
+    end
+  {$IFDEF USE_LOGS}
+  except
+    on E: Exception do
       begin
-        AMessage.Result := 0;
-        if CanProcessItemChange then
-          begin
-            NMTVItemChange := PNMTVItemChange(AMessage.NMHdr);
-            Node := TTreeNode(NMTVItemChange.lParam);
-            if Assigned(Node) then
-              if (NMTVItemChange.uStateNew and TVIS_STATEIMAGEMASK) <> (NMTVItemChange.uStateOld and TVIS_STATEIMAGEMASK) then
-                begin
-                  Node.StateIndex := (NMTVItemChange.uStateNew and TVIS_STATEIMAGEMASK) shr 12;
-                  if Assigned(FOnStateIconChanged) then
-                    FOnStateIconChanged(Self, Node);
-                end
-          end;
-      end;
-  else
-    inherited;
-  end
+        LogTreeViewNotifyProcException(E);
+        LogExitTreeViewNotifyProc(AMessage);
+        raise;
+      end
+  end;
+  LogExitTreeViewNotifyProc(AMessage);
+  {$ENDIF}
 end;
 
 procedure TdecTreeView.SaveStateIndexes;
@@ -369,7 +429,7 @@ var
   Count, Index: Integer;
   Node: TTreeNode;
   IconIndex: Integer;
-  Item: TTVItem;
+  Item: TTVItemW;
 begin
   FStateIndexesStream.Position := 0;
   FStateIndexesStream.ReadBuffer(Count, SizeOf(Count));
@@ -436,7 +496,7 @@ procedure TdecTreeView.SetAutoCenter(AAutoCenter: Boolean);
 begin
   if FAutoCenter = AAutoCenter then Exit;
   FAutoCenter := AAutoCenter;
-  if HandleAllocated and AlternativeView then
+  if AlternativeView then
     SetStyleEx(TVS_EX_AUTOCENTER, FAutoCenter);
 end;
 
@@ -560,6 +620,14 @@ end;
 function TdecTreeView.IsSetExtraCheckboxesStates: Boolean;
 begin
   Result := Checkboxes and (FExtraCheckboxesStates <> []);
+end;
+
+procedure TdecTreeView.SetIntoTips(AIntoTips: Boolean);
+begin
+  if FIntoTips = AIntoTips then Exit;
+  FIntoTips := AIntoTips;
+  if AlternativeView then
+    SetStyle(TVS_INFOTIP, AIntoTips);
 end;
 
 initialization

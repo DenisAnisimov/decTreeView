@@ -11,7 +11,6 @@ Messages:
   CCM_GETVERSION
   CCM_SETVERSION
 
-  TVM_CREATEDRAGIMAGE
   TVM_EDITLABEL
   TVM_ENDEDITLABELNOW
   TVM_GETEDITCONTROL
@@ -19,15 +18,12 @@ Messages:
   TVM_GETITEMHEIGHT
   TVM_GETITEMPARTRECT
   TVM_GETSCROLLTIME
-  TVM_GETTOOLTIPS
   TVM_GETVISIBLECOUNT
   TVM_MAPACCIDTOHTREEITEM
   TVM_MAPHTREEITEMTOACCID
   TVM_SETAUTOSCROLLINFO
-  TVM_SETHOT
   TVM_SETITEMHEIGHT
   TVM_SETSCROLLTIME
-  TVM_SETTOOLTIPS
   TVM_SHOWINFOTIP
   TVM_SORTCHILDREN
   TVM_SORTCHILDRENCB
@@ -35,22 +31,16 @@ Messages:
 Notification:
 
   TVN_ASYNCDRAW
-  TVN_BEGINDRAG
   TVN_BEGINLABELEDIT
-  TVN_BEGINRDRAG
   TVN_ENDLABELEDIT
-  TVN_GETINFOTIP
   TVN_SETDISPINFO
 
 Styles:
-  TVS_DISABLEDRAGDROP
   TVS_EDITLABELS
   TVS_FULLROWSELECT
   TVS_HASLINES
-  TVS_INFOTIP
   TVS_NOHSCROLL
   TVS_NONEVENHEIGHT
-  TVS_NOTOOLTIPS
   TVS_RTLREADING
 
 ExtStyles:
@@ -60,7 +50,6 @@ ExtStyles:
   TVS_EX_MULTISELECT
   TVS_EX_NOINDENTSTATE
   TVS_EX_NOSINGLECOLLAPSE
-  TVS_EX_RICHTOOLTIP
 
 *)
 
@@ -82,12 +71,22 @@ interface
   {$DEFINE SUPPORTS_ATOMICINCREMENT}
 {$ifend}
 
+{$if CompilerVersion > 18}
+  {$DEFINE SUPPORTS_NNN_PTR}
+{$ifend}
+
 uses
   Windows, {$IFDEF DLL_MODE}decCommCtrl{$ELSE}CommCtrl{$ENDIF};
 
 {$IFNDEF SUPPORTS_UNICODE_STRING}
 type
   UnicodeString = WideString;
+{$ENDIF}
+
+{$IFNDEF SUPPORTS_NNN_PTR}
+type
+  DWORD_PTR = DWORD;
+  UINT_PTR = UINT;
 {$ENDIF}
 
 {$ALIGN ON}
@@ -101,7 +100,8 @@ function InitTreeViewLib: ATOM; stdcall;
 implementation
 
 uses
-  Types, Messages, decTreeViewLibApi {$IFDEF DEBUG}, SysUtils{$ENDIF} {$IFDEF USE_LOGS}, decShellLogs, decTreeViewLibLogs{$ENDIF};
+  Types, Messages, MultiMon, decTreeViewLibApi {$IFDEF DEBUG}, SysUtils{$ENDIF}
+  {$IFDEF USE_LOGS}, decShellLogs, decTreeViewLibLogs{$ENDIF};
 
 {$if CompilerVersion < 23}
 {$I decTreeViewFix.inc}
@@ -234,6 +234,7 @@ type
   TGetThemeBackgroundContentRect = function(ATheme: HTHEME; ADC: HDC; APartId, AStateId: Integer; const ABoundingRect: TRect; AContentRect: PRECT): HRESULT; stdcall;
   TGetThemeColor = function(ATheme: HTHEME; APartId, AStateId, APropId: Integer; var AColor: COLORREF): HRESULT; stdcall;
   TGetThemePartSize = function(ATheme: HTHEME; ADC: HDC; APartId, AStateId: Integer; ARect: PRECT; ASize: THEMESIZE; var psz: TSize): HRESULT; stdcall;
+  TGetWindowTheme = function(AWnd: HWND): HTHEME; stdcall;
   TIsAppThemed = function: BOOL; stdcall;
   TIsThemeActive = function: BOOL; stdcall;
   TIsThemeBackgroundPartiallyTransparent = function(ATheme: HTHEME; APartId, AStateId: Integer): BOOL; stdcall;
@@ -312,6 +313,7 @@ var
   _GetThemeBackgroundContentRect: TGetThemeBackgroundContentRect;
   _GetThemeColor: TGetThemeColor;
   _GetThemePartSize: TGetThemePartSize;
+  _GetWindowTheme: TGetWindowTheme;
   _IsAppThemed: TIsAppThemed;
   _IsThemeActive: TIsThemeActive;
   _IsThemeBackgroundPartiallyTransparent: TIsThemeBackgroundPartiallyTransparent;
@@ -356,6 +358,7 @@ begin
           _GetThemeBackgroundContentRect := GetProcAddress(UXThemeLib, 'GetThemeBackgroundContentRect');
           _GetThemeColor := GetProcAddress(UXThemeLib, 'GetThemeColor');
           _GetThemePartSize := GetProcAddress(UXThemeLib, 'GetThemePartSize');
+          _GetWindowTheme := GetProcAddress(UXThemeLib, '_GetWindowTheme');
           _IsAppThemed := GetProcAddress(UXThemeLib, 'IsAppThemed');
           _IsThemeActive := GetProcAddress(UXThemeLib, 'IsThemeActive');
           _IsThemeBackgroundPartiallyTransparent := GetProcAddress(UXThemeLib, 'IsThemeBackgroundPartiallyTransparent');
@@ -452,6 +455,14 @@ begin
     Result := _GetThemePartSize(ATheme, ADC, APartId, AStateId, ARect, ASize, psz)
   else
     Result := E_NOTIMPL;
+end;
+
+function GetWindowTheme(AWnd: HWND): HTHEME;
+begin
+  if Assigned(_GetWindowTheme) then
+    Result := _GetWindowTheme(AWnd)
+  else
+    Result := 0;
 end;
 
 function IsAppThemed: Boolean;
@@ -838,7 +849,8 @@ type
     procedure PaintIcon(ADC: HDC; const ARect: TRect);
     procedure PaintText(ADC: HDC; var ARect: TRect; AFontColor: TColorRef);
     procedure PaintButton(ADC: HDC; AGdiCache: TGdiCache; const ARect: TRect);
-    procedure Paint(ADC: HDC; AGdiCache: TGdiCache; AUpdateRgn, ABackgroupRgn: HRGN; AXOffset, AYOffset: Integer; AEraseBackground: Boolean);
+    procedure Paint(ADC: HDC; AGdiCache: TGdiCache; AUpdateRgn, ABackgroupRgn: HRGN; AXOffset, AYOffset: Integer;
+      AEraseBackground: Boolean; ASingleItem: Boolean);
     procedure MouseMove(const APoint: TPoint);
     procedure MouseLeave;
   private
@@ -964,7 +976,7 @@ type
   private
     function InsertItemW(AInsertAfter: TTreeViewItem; AItem: PTVItemExW): TTreeViewItem;
     function InsertItemA(AInsertAfter: TTreeViewItem; AItem: PTVItemExA): TTreeViewItem;
-    function GetNextItem(AItem: TTreeViewItem; ADirection: DWORD): TTreeViewItem;
+    //function GetNextItem(AItem: TTreeViewItem; ADirection: DWORD): TTreeViewItem;
     procedure DeleteItem(AItem: TTreeViewItem);
     procedure DeleteAll;
     function ItemAtPos(const APoint: TPoint): TTreeViewItem;
@@ -1047,9 +1059,11 @@ type
     procedure PrePaintRootConnectors(ADC: HDC; AGdiCache: TGdiCache; AUpdateRgn, ABackgroupRgn: HRGN);
     procedure PaintRootConnectors(ADC: HDC; AGdiCache: TGdiCache; AUpdateRgn, ABackgroupRgn: HRGN; AEraseBackground: Boolean);
     procedure PaintInsertMask(ADC: HDC; AUpdateRgn: HRGN);
-    procedure PaintTo(ADC: HDC; AGdiCache: TGdiCache; var AUpdateRgn, ABackgroupRgn: HRGN; ASmartEraseBackground: Boolean);
+    procedure PaintTo(ADC: HDC; AGdiCache: TGdiCache; var AUpdateRgn, ABackgroupRgn: HRGN;
+      ASmartEraseBackground: Boolean; ASingleItem: TTreeViewItem);
     procedure Paint;
     procedure PaintClient(ADC: HDC);
+    function CreateDragImage(AItem: TTreeViewItem): HIMAGELIST;
     procedure Invalidate;
     procedure InvalidateItem(AItem: TTreeViewItem); overload;
     procedure InvalidateItem(AItem: TTreeViewItem; ARect: PRect); overload;
@@ -1062,6 +1076,22 @@ type
     property AnimationExpandItem: TTreeViewItem read FAnimationExpandItem;
     property AnimationCollapseItem: TTreeViewItem read FAnimationCollapseItem;
   private
+    // Tooltip routines
+    FToolTipWnd: HWND;
+    FToolTipWndCreated: Boolean;
+    FTooltipWndOwner: Boolean;
+    FNeedHoverToolTip: Boolean;
+    FToolTipInfoTip: Boolean;
+    FToolTipTextText: UnicodeString;
+    FToolTipRect: TRect;
+    FToolTipIconRect: TRect;
+    FToolTipTextRect: TRect;
+    procedure CreateTooltipWnd;
+    procedure HideToolTip;
+    procedure ShowToolTip;
+    procedure SetToolTipItem(AToolTipItem: TTreeViewItem);
+    function ToolTipNotify(ANMHdr: PNMHdr): LRESULT;
+  private
     // Item routines
     FInsertMaskItem: TTreeViewItem;
     FInsertMaskItemAfter: Boolean;
@@ -1073,6 +1103,9 @@ type
     FPressedItem: TTreeViewItem;
     FPressedItemRealClick: Boolean;
     FDropItem: TTreeViewItem;
+    FSelectedItems: array of TTreeViewItem;
+    FSelectedCount: Integer;
+    FToolTipItem: TTreeViewItem;
     procedure HitTest(TVHitTestInfo: PTVHitTestInfo);
     procedure MakeVisible(AItem: TTreeViewItem);
     function ExpandItem(AItem: TTreeViewItem; ACode, AAction: UINT; ANotify: Boolean): Boolean;
@@ -1082,19 +1115,25 @@ type
     procedure SetInsertMaskItemAfter(AInsertMaskItem: TTreeViewItem; AAfter: Boolean);
     procedure SetInsertMaskItem(AInsertMaskItem: TTreeViewItem);
     function GetInsertMaskRect: TRect;
-    procedure SetHotItem(AHotItem: TTreeViewItem; const APoint: TPoint); overload;
-    //procedure SetHotItem(AHotItem: TTreeViewItem); overload;
+    procedure SetHotItemEx(AHotItem: TTreeViewItem; const APoint: TPoint);
+    procedure SetHotItem(AHotItem: TTreeViewItem);
     procedure SetPressedItem(APressedItem: TTreeViewItem);
     procedure SetDropItem(ADropItem: TTreeViewItem);
+    procedure AddToSelectedItems(AItem: TTreeViewItem);
+    procedure RemoveFromSelectedItems(AItem: TTreeViewItem);
+    function FindNextSelected(APrevItem: TTreeViewItem): TTreeViewItem;
+    function FindNextVisible(APrevItem: TTreeViewItem): TTreeViewItem;
+    function FindPrevVisible(APrevItem: TTreeViewItem): TTreeViewItem;
     property InsertMaskItem: TTreeViewItem read FInsertMaskItem write SetInsertMaskItem;
     property InsertMaskItemAfter: Boolean read FInsertMaskItemAfter;
     property InsertMaskRect: TRect read GetInsertMaskRect;
     property FocusedItem: TTreeViewItem read FFocusedItem;
     property FixedItem: TTreeViewItem read FFixedItem write FFixedItem;
     property ScrollItem: TTreeViewItem read FScrollItem write FScrollItem;
-    property HotItem: TTreeViewItem read FHotItem {write SetHotItem};
+    property HotItem: TTreeViewItem read FHotItem write SetHotItem;
     property PressedItem: TTreeViewItem read FPressedItem write SetPressedItem;
     property DropItem: TTreeViewItem read FDropItem write SetDropItem;
+    property ToolTipItem: TTreeViewItem read FToolTipItem write SetToolTipItem;
   private
     // Control routines
     FMoveMode: Boolean;
@@ -1105,6 +1144,7 @@ type
     FWheelActivity: array[Boolean] of Cardinal;
     function GetClientCursorPos: TPoint;
     procedure KeyDown(AKeyCode: DWORD; AFlags: DWORD);
+    function CanDrag(APoint: TPoint): Boolean;
     procedure LButtonDown(const APoint: TPoint);
     procedure LButtonDblDown(const APoint: TPoint);
     procedure LButtonUp(const APoint: TPoint);
@@ -1123,7 +1163,7 @@ type
     // Callback routines
     function SendNotify(AParentWnd, AWnd: HWND; ACode: Integer; ANMHdr: PNMHdr): LRESULT; overload;
     function SendNotify(ACode: Integer; ANMHdr: PNMHdr): LRESULT; overload;
-    function SendTreeViewNotify(ACode: Integer; AOldItem, ANewItem: TTreeViewItem; AAction: UINT): UINT;
+    function SendTreeViewNotify(ACode: Integer; AOldItem, ANewItem: TTreeViewItem; AAction: UINT; APoint: PPoint = nil): UINT;
     function SendItemChangeNofify(ACode: Integer; AItem: TTreeViewItem; AOldState, ANewState: UINT): Boolean;
     function SendMouseNofify(ACode: Integer; AItem: TTreeViewItem; const APoint: TPoint): Boolean; overload;
   private
@@ -1136,6 +1176,7 @@ type
     FArrowCursor: HCURSOR;
     FHandCursor: HCURSOR;
     FMoveCursor: HCURSOR;
+    function TempTextBuffer: Pointer;
     function DoUpdate2: Boolean;
     procedure DoUpdate;
     procedure Update; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
@@ -1216,6 +1257,10 @@ type
     procedure SetStyle(AStyle: UINT);
     procedure SetStyle2(AMask, AStyle2: UINT);
     procedure SetStyleEx(AStyleEx: UINT);
+    function GetDisableDragDrop: Boolean; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+    function GetInfoTip: Boolean; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+    function GetNoToolTips: Boolean; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+    function GetRichToolTip: Boolean; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
     procedure SetDpi(ADpi: UINT);
     procedure CloseTheme;
     procedure OpenTheme;
@@ -1246,18 +1291,23 @@ type
     function GetItems: TTreeViewItems;
     function GetCount: Integer;
     function GetItem(AIndex: Integer): TTreeViewItem;
+
     property Focused: Boolean read FFocused write SetFocused;
     property AlwaysShowSelection: Boolean read FAlwaysShowSelection;
     property AutoCenter: Boolean read FAutoCenter;
     property Border: Boolean read FBorder;
     property ClientEdge: Boolean read FClientEdge;
+    property DisableDragDrop: Boolean read GetDisableDragDrop;
     property HasButtons: Boolean read FHasButtons;
-    property VertDirection: Boolean read FVertDirection;
-    property LinesAsRoot: Boolean read FLinesAsRoot;
+    property InfoTip: Boolean read GetInfoTip;
     property InvertDirection: Boolean read FInvertDirection;
+    property LinesAsRoot: Boolean read FLinesAsRoot;
     property NoScroll: Boolean read FNoScroll write SetNoScroll;
+    property NoToolTips: Boolean read GetNoToolTips;
+    property RichToolTip: Boolean read GetRichToolTip;
     property SingleExpand: Boolean read FSingleExpand;
     property TrackSelect: Boolean read FTrackSelect;
+    property VertDirection: Boolean read FVertDirection;
     property CheckBoxes: Boolean read FCheckBoxes;
 
     property Dpi: UINT read FDpi write SetDpi;
@@ -1291,6 +1341,9 @@ type
     property Count: Integer read GetCount;
     property Items[AIndex: Integer]: TTreeViewItem read GetItem;
   end;
+
+const
+  TempTextBufferSize = 1024 * 2;
 
 //**************************************************************************************************
 // TTreeViewItem
@@ -1581,6 +1634,11 @@ begin
         if not FTreeView.SendItemChangeNofify(TVN_ITEMCHANGINGW, Self, PrevState, NewState) then
           begin
             FState := NewState;
+            if PrevSelected <> Selected then
+              begin
+                if PrevSelected then TreeView.RemoveFromSelectedItems(Self);
+                if Selected then TreeView.AddToSelectedItems(Self);
+              end;
 
             if Expanded <> PrevExpanded then
               if Expanded then
@@ -1873,7 +1931,7 @@ begin
       ItemSize.nmcd.hdc := ADC;
       ItemSize.nmcd.rc.Right := FWidth;
       ItemSize.nmcd.rc.Bottom := FHeight;
-      ItemSize.nmcd.dwItemSpec := {$IFDEF WIN64}DWORD_PTR(Self){$ELSE}DWORD(Self){$ENDIF};
+      ItemSize.nmcd.dwItemSpec := DWORD_PTR(Self);
       ItemSize.nmcd.lItemlParam := FParam;
       ItemSize.iLevel := Level;
       if FTreeView.SendNotify(TVN_GETITEMSIZE, @ItemSize) <> 0 then
@@ -2372,7 +2430,8 @@ begin
       end;
 end;
 
-procedure TTreeViewItem.Paint(ADC: HDC; AGdiCache: TGdiCache; AUpdateRgn, ABackgroupRgn: HRGN; AXOffset, AYOffset: Integer; AEraseBackground: Boolean);
+procedure TTreeViewItem.Paint(ADC: HDC; AGdiCache: TGdiCache; AUpdateRgn, ABackgroupRgn: HRGN; AXOffset, AYOffset: Integer;
+  AEraseBackground: Boolean; ASingleItem: Boolean);
 var
   TempRgn: HRGN;
   ItemRect: TRect;
@@ -2388,7 +2447,7 @@ begin
     begin
       PaintBackground(ADC, AGdiCache, ItemRect, FontColor);
 
-      if TreeView.Focused and (Self = FTreeView.FocusedItem) then
+      if not ASingleItem and TreeView.Focused and (Self = FTreeView.FocusedItem) then
         PaintFocus := not TreeView.FHideFocus
       else
         PaintFocus := False;
@@ -2401,7 +2460,7 @@ begin
         begin
           NMTVCustomDraw.nmcd.rc := ItemRect;
           OffsetRect(NMTVCustomDraw.nmcd.rc, AXOffset, AYOffset);
-          NMTVCustomDraw.nmcd.dwItemSpec := {$IFDEF WIN64}DWORD_PTR(Self){$ELSE}DWORD(Self){$ENDIF};
+          NMTVCustomDraw.nmcd.dwItemSpec := DWORD_PTR(Self);
           if Selected then
             NMTVCustomDraw.nmcd.uItemState := NMTVCustomDraw.nmcd.uItemState or CDIS_SELECTED;
           if not Enabled then
@@ -2476,9 +2535,9 @@ begin
         end;
     end;
 
-  if Expanded and (TreeView.AnimationExpandItem <> Self) then
+  if not ASingleItem and Expanded and (TreeView.AnimationExpandItem <> Self) then
     for ItemIndex := 0 to Count - 1 do
-      Items[ItemIndex].Paint(ADC, AGdiCache, AUpdateRgn, ABackgroupRgn, AXOffset, AYOffset, AEraseBackground);
+      Items[ItemIndex].Paint(ADC, AGdiCache, AUpdateRgn, ABackgroupRgn, AXOffset, AYOffset, AEraseBackground, False);
 end;
 
 procedure TTreeViewItem.MouseMove(const APoint: TPoint);
@@ -2534,16 +2593,17 @@ var
 begin
   if FTextCallback then
     begin
-      if not Assigned(TreeView.FTempTextBuffer) then
-        GetMem(TreeView.FTempTextBuffer, 32768 * SizeOf(WideChar));
       TVDispInfoW.item.mask := TVIF_HANDLE or TVIF_PARAM or TVIF_TEXT;
       TVDispInfoW.item.hItem := HTreeItem(Self);
       TVDispInfoW.item.lParam := FParam;
-      TVDispInfoW.item.pszText := TreeView.FTempTextBuffer;
-      TVDispInfoW.item.pszText^ := #0;
-      TVDispInfoW.item.cchTextMax := 32768;
+      TVDispInfoW.item.pszText := TreeView.TempTextBuffer;
+      ZeroMemory(TVDispInfoW.item.pszText, TempTextBufferSize);
+      TVDispInfoW.item.cchTextMax := TempTextBufferSize div SizeOf(WideChar);
       TreeView.SendNotify(TVN_GETDISPINFOW, @TVDispInfoW);
-      Result := PWideChar(TreeView.FTempTextBuffer);
+      Result := PWideChar(TVDispInfoW.item.pszText);
+      {$IFDEF DEBUG}
+      FText := Result;
+      {$ENDIF}
     end
   else
     Result := FText;
@@ -2869,8 +2929,8 @@ begin
   if AItem.mask and TVIF_TEXT <> 0 then
     begin
       if IsFlagPtr(AItem.pszText) then
-    	  Result.FTextCallback := True
-    	else
+       Result.FTextCallback := True
+     else
         Result.FText := AItem.pszText;
     end;
 
@@ -2928,11 +2988,10 @@ begin
     end;
 end;
 
-function TTreeViewItems.GetNextItem(AItem: TTreeViewItem; ADirection: DWORD): TTreeViewItem;
+{function TTreeViewItems.GetNextItem(AItem: TTreeViewItem; ADirection: DWORD): TTreeViewItem;
 begin
   Result := nil;
   case ADirection of
-    //TVGN_ROOT: Processed in TreeView
     TVGN_NEXT:
       if AItem.Index_ < Count - 1 then
         Result := Items[AItem.Index_ + 1];
@@ -2941,20 +3000,10 @@ begin
         Result := Items[AItem.Index_ - 1];
     TVGN_PARENT:
       Result := Parent;
-    TVGN_CHILD:
-      if AItem.Count > 0 then
-        Result := AItem.Items[0];
-    //TVGN_FIRSTVISIBLE:
-    //TVGN_NEXTVISIBLE:
-    //TVGN_PREVIOUSVISIBLE:
-    //TVGN_DROPHILITE:
-    //TVGN_CARET: Processed in TreeView
-    //TVGN_LASTVISIBLE:
-    //TVGN_NEXTSELECTED:
   else
     Result := nil;
   end;
-end;
+end;}
 
 procedure TTreeViewItems.DeleteItem(AItem: TTreeViewItem);
 var
@@ -2989,6 +3038,8 @@ begin
   if TreeView.HotItem = AItem then TreeView.FHotItem := nil;
   if TreeView.PressedItem = AItem then TreeView.FPressedItem := nil;
   if TreeView.DropItem = AItem then TreeView.FDropItem := nil;
+  if TreeView.ToolTipItem = AItem then TreeView.ToolTipItem := nil;
+  if AItem.Selected then TreeView.RemoveFromSelectedItems(AItem);
 
   Position := AItem.Index_;
   CopyCount := Count - Position - 1;
@@ -3782,7 +3833,8 @@ begin
   DeleteObject(Pen);
 end;
 
-procedure TTreeView.PaintTo(ADC: HDC; AGdiCache: TGdiCache; var AUpdateRgn, ABackgroupRgn: HRGN; ASmartEraseBackground: Boolean);
+procedure TTreeView.PaintTo(ADC: HDC; AGdiCache: TGdiCache; var AUpdateRgn, ABackgroupRgn: HRGN;
+  ASmartEraseBackground: Boolean; ASingleItem: TTreeViewItem);
 var
   XOffset, YOffset: Integer;
   NMCustomDraw: TNMTVCustomDraw;
@@ -3820,19 +3872,24 @@ begin
           OffsetRgn(AUpdateRgn, -XOffset, -YOffset);
           OffsetRgn(ABackgroupRgn, -XOffset, -YOffset);
 
-          if ASmartEraseBackground then
+          if not Assigned(ASingleItem) then
             begin
-              PrePaintRootConnectors(ADC, AGdiCache, AUpdateRgn, ABackgroupRgn);
+              if ASmartEraseBackground then
+                begin
+                  PrePaintRootConnectors(ADC, AGdiCache, AUpdateRgn, ABackgroupRgn);
+                  for ItemIndex := 0 to Count - 1 do
+                    Items[ItemIndex].PrePaintConnectors(ADC, AGdiCache, AUpdateRgn, ABackgroupRgn);
+                end;
+              PaintRootConnectors(ADC, AGdiCache, AUpdateRgn, ABackgroupRgn, ASmartEraseBackground);
               for ItemIndex := 0 to Count - 1 do
-                Items[ItemIndex].PrePaintConnectors(ADC, AGdiCache, AUpdateRgn, ABackgroupRgn);
-            end;
-          PaintRootConnectors(ADC, AGdiCache, AUpdateRgn, ABackgroupRgn, ASmartEraseBackground);
-          for ItemIndex := 0 to Count - 1 do
-            Items[ItemIndex].PaintConnectors(ADC, AGdiCache, AUpdateRgn);
-          AGdiCache.DeleteGdiPlusDC;
+                Items[ItemIndex].PaintConnectors(ADC, AGdiCache, AUpdateRgn);
+              AGdiCache.DeleteGdiPlusDC;
 
-          for ItemIndex := 0 to Count - 1 do
-            Items[ItemIndex].Paint(ADC, AGdiCache, AUpdateRgn, ABackgroupRgn, XOffset, YOffset, ASmartEraseBackground);
+              for ItemIndex := 0 to Count - 1 do
+                Items[ItemIndex].Paint(ADC, AGdiCache, AUpdateRgn, ABackgroupRgn, XOffset, YOffset, ASmartEraseBackground, False);
+            end
+          else
+            ASingleItem.Paint(ADC, AGdiCache, AUpdateRgn, ABackgroupRgn, XOffset, YOffset, False, True);
 
           SetWindowOrgEx(ADC, FSavePoint.X, FSavePoint.Y, nil);
           OffsetRgn(AUpdateRgn, XOffset, YOffset);
@@ -3846,7 +3903,7 @@ begin
         SendDrawNotify(ADC, CDDS_POSTPAINT, NMCustomDraw);
     end;
 
-  if Assigned(InsertMaskItem) and InsertMaskItem.IsVisible then
+  if not Assigned(ASingleItem) and Assigned(InsertMaskItem) and InsertMaskItem.IsVisible then
     begin
       SetWindowOrgEx(ADC, FSavePoint.X - XOffset, FSavePoint.Y - YOffset, nil);
       OffsetRgn(AUpdateRgn, -XOffset, -YOffset);
@@ -3892,7 +3949,7 @@ begin
                     try
                       GdiCache := TGdiCache.Create(Self, DBDC);
                       try
-                        PaintTo(DBDC, GdiCache, UpdateRgn, BackgroupRgn, False);
+                        PaintTo(DBDC, GdiCache, UpdateRgn, BackgroupRgn, False, nil);
                       finally
                         GdiCache.Free;
                       end;
@@ -3916,7 +3973,7 @@ begin
                             SetWindowOrgEx(DBDC, PaintStruct.rcPaint.Left, PaintStruct.rcPaint.Top, nil);
                             GdiCache := TGdiCache.Create(Self, DBDC);
                             try
-                              PaintTo(DBDC, GdiCache, UpdateRgn, BackgroupRgn, False);
+                              PaintTo(DBDC, GdiCache, UpdateRgn, BackgroupRgn, False, nil);
                             finally
                               GdiCache.Free;
                             end;
@@ -3936,7 +3993,7 @@ begin
               begin
                 GdiCache := TGdiCache.Create(Self, DC);
                 try
-                  PaintTo(DC, GdiCache, UpdateRgn, BackgroupRgn, True);
+                  PaintTo(DC, GdiCache, UpdateRgn, BackgroupRgn, True, nil);
                 finally
                   GdiCache.Free;
                 end;
@@ -3966,7 +4023,7 @@ begin
   try
     GdiCache := TGdiCache.Create(Self, ADC);
     try
-      PaintTo(ADC, GdiCache, UpdateRgn, BackgroupRgn, False);
+      PaintTo(ADC, GdiCache, UpdateRgn, BackgroupRgn, False, nil);
     finally
       GdiCache.Free;
     end;
@@ -3974,6 +4031,145 @@ begin
     DeleteObject(UpdateRgn);
     DeleteObject(BackgroupRgn);
   end;
+end;
+
+function CreateColorBitmap(ADC: HDC; AWidth, AHeight: UINT): HBITMAP;
+var
+  BitmapInfo: TBitmapInfo;
+  BPS: UINT;
+  Size: UINT;
+  Data: Pointer;
+begin
+  BPS := (((AWidth * 24) + 31) and not 31) div 8;
+  Size := BPS * AHeight;
+  ZeroMemory(@BitmapInfo, SizeOf(BitmapInfo));
+  with BitmapInfo, bmiHeader do
+    begin
+      biSize := SizeOf(BitmapInfo);
+      biWidth := AWidth;
+      biHeight := -AHeight;
+      biPlanes := 1;
+      biBitCount := 24;
+      biCompression := BI_RGB;
+      biSizeImage := Size;
+      biClrUsed := 0;
+      biClrImportant := biClrUsed;
+    end;
+  Result := CreateDIBSection(ADC, BitmapInfo, DIB_RGB_COLORS, Data, 0, 0);
+end;
+
+type
+  TMaxBitmapInfo = packed record
+    bmiHeader: TBitmapInfoHeader;
+    Colors0: TRGBQuad;
+    Colors1: TRGBQuad;
+  end;
+
+function CreateMaskBitmap(ADC: HDC; AWidth, AHeight: UINT): HBITMAP;
+var
+  BitmapInfo: TMaxBitmapInfo;
+  BPS: UINT;
+  Size: UINT;
+  Data: Pointer;
+begin
+  BPS := ((AWidth + 31) and not 31) div 8;
+  Size := BPS * AHeight;
+  ZeroMemory(@BitmapInfo, SizeOf(BitmapInfo));
+  with BitmapInfo, bmiHeader do
+    begin
+      biSize := SizeOf(bmiHeader);
+      biWidth := AWidth;
+      biHeight := -AHeight;
+      biPlanes := 1;
+      biBitCount := 1;
+      biCompression := BI_RGB;
+      biSizeImage := Size;
+      biClrUsed := 2;
+      biClrImportant := biClrUsed;
+      DWORD(Colors0) := $000000;
+      DWORD(Colors1) := $FFFFFF;
+    end;
+  Result := CreateDIBSection(ADC, PBitmapInfo(@BitmapInfo)^, DIB_RGB_COLORS, Data, 0, 0);
+  if Result <> 0 then
+    ZeroMemory(Data, Size);
+end;
+
+function TTreeView.CreateDragImage(AItem: TTreeViewItem): HIMAGELIST;
+var
+  ItemRect: TRect;
+  UpdateRgn: HRGN;
+  BackgroupRgn: HRGN;
+  DesktopWnd: HWND;
+  DesktopDC: HDC;
+  GdiCache: TGdiCache;
+  DBWidth, DBHeight: Integer;
+  DBDC: HDC;
+  DBBitmap: HBITMAP;
+  SaveBitmap: HBITMAP;
+  MaskBitmap: HBITMAP;
+begin
+  Result := 0;
+  DesktopWnd := GetDesktopWindow;
+  DesktopDC := GetDC(DesktopWnd);
+  if DesktopDC <> 0 then
+    try
+      DBDC := CreateCompatibleDC(DesktopDC);
+      if DBDC <> 0 then
+        try
+          ItemRect := AItem.BoundsRect;
+          OffsetItemRect(ItemRect);
+          DBWidth := ItemRect.Right - ItemRect.Left;
+          DBHeight := ItemRect.Bottom - ItemRect.Top;
+
+          //DBBitmap := CreateCompatibleBitmap(DesktopDC, DBWidth, DBHeight);
+          DBBitmap := CreateColorBitmap(DesktopDC, DBWidth, DBHeight);
+          if DBBitmap <> 0 then
+            try
+              SaveBitmap := SelectObject(DBDC, DBBitmap);
+              try
+                SetWindowOrgEx(DBDC, ItemRect.Left, ItemRect.Top, nil);
+                with ItemRect do
+                  UpdateRgn := CreateRectRgn(Left, Top, Right, Bottom);
+                try
+                  with ItemRect do
+                    BackgroupRgn := CreateRectRgn(Left, Top, Right, Bottom);
+                  try
+
+                    GdiCache := TGdiCache.Create(Self, DBDC);
+                    try
+                      PaintTo(DBDC, GdiCache, UpdateRgn, BackgroupRgn, False, AItem);
+                    finally
+                      GdiCache.Free;
+                    end;
+
+                  finally
+                    DeleteObject(BackgroupRgn);
+                  end;
+                finally
+                  DeleteObject(UpdateRgn);
+                end;
+                SetWindowOrgEx(DBDC, 0, 0, nil);
+              finally
+                SelectObject(DBDC, SaveBitmap);
+              end;
+
+              Result := ImageList_Create(DBWidth, DBHeight, ILC_MASK or ILC_COLOR24, 1, 1);
+              if Result <> 0 then
+                begin
+                  ImageList_SetBkColor(Result, CLR_NONE);
+                  MaskBitmap := CreateMaskBitmap(DesktopDC, DBWidth, DBHeight);
+                  ImageList_Add(Result, DBBitmap, MaskBitmap);
+                  DeleteObject(MaskBitmap);
+                end
+            finally
+              DeleteObject(DBBitmap);
+            end;
+        finally
+          DeleteDC(DBDC);
+        end;
+    finally
+      ReleaseDC(DesktopWnd, DesktopDC);
+    end;
 end;
 
 procedure TTreeView.Invalidate;
@@ -4194,6 +4390,323 @@ begin
   Invalidate;
 end;
 
+{$if CompilerVersion < 19}
+type
+  SUBCLASSPROC = function(hWnd: HWND; uMsg: UINT; wParam: WPARAM;
+    lParam: LPARAM; uIdSubclass: DWORD; dwRefData: DWORD): LRESULT; stdcall;
+
+function SetWindowSubclass(hWnd: HWND; pfnSubclass: SUBCLASSPROC; uIdSubclass: UINT_PTR; dwRefData: DWORD_PTR): BOOL; stdcall; external comctl32 name 'SetWindowSubclass';
+function DefSubclassProc(hWnd: HWND; uMsg: UINT; wParam: WPARAM; lParam: LPARAM): LRESULT; stdcall; external comctl32 name 'DefSubclassProc';
+{$ifend}
+
+function ToolTipSubClassProc(AWnd: HWND; AMsg: UINT; AWParam: WPARAM; ALParam: LPARAM; AIdSubclass: UINT_PTR; ARefData: DWORD_PTR): LRESULT; stdcall;
+begin
+  if AMsg = WM_NCHITTEST then
+    Result := HTTRANSPARENT
+  else
+    Result := DefSubclassProc(AWnd, AMsg, AWParam, ALParam);
+end;
+
+const
+  TooltipText: string = ' ';
+
+procedure TTreeView.CreateTooltipWnd;
+var
+  ICC: TInitCommonControlsEx;
+  ToolInfo: TToolInfo;
+begin
+  if FDestroying or (FToolTipWnd <> 0) or FToolTipWndCreated then Exit;
+
+  FToolTipWndCreated := True;
+  ICC.dwSize := SizeOf(ICC);
+  ICC.dwICC := ICC_WIN95_CLASSES;
+  if not InitCommonControlsEx(ICC) then Exit;
+  FToolTipWnd := CreateWindowEx(0, TOOLTIPS_CLASS, nil, 0
+    or WS_POPUP or TTS_NOPREFIX,
+    Integer(CW_USEDEFAULT), Integer(CW_USEDEFAULT), Integer(CW_USEDEFAULT), Integer(CW_USEDEFAULT), FHandle, 0, HInstance, nil);
+  if FToolTipWnd <> 0 then
+    begin
+      SetWindowPos(FToolTipWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE or SWP_NOSIZE or SWP_NOACTIVATE);
+
+      ZeroMemory(@ToolInfo, SizeOf(ToolInfo));
+      ToolInfo.cbSize := sizeof(ToolInfo);
+      ToolInfo.uFlags := TTF_IDISHWND or TTF_TRACK or TTF_ABSOLUTE or TTF_TRANSPARENT;
+      ToolInfo.hwnd := FHandle;
+      ToolInfo.uId := FHandle;
+      ToolInfo.lpszText := PChar(TooltipText);
+      SendMessage(FToolTipWnd, TTM_ADDTOOL, 0, LPARAM(@ToolInfo));
+
+      SetWindowSubclass(FToolTipWnd, @ToolTipSubClassProc, UINT_PTR(Self), 0);
+    end;
+end;
+
+procedure TTreeView.HideToolTip;
+var
+  ToolInfo: TToolInfo;
+begin
+  if FToolTipWnd <> 0 then
+    begin
+      ZeroMemory(@ToolInfo, SizeOf(ToolInfo));
+      ToolInfo.cbSize := SizeOf(ToolInfo);
+      ToolInfo.hwnd := FHandle;
+      ToolInfo.uId := FHandle;
+      SendMessage(FToolTipWnd, TTM_TRACKACTIVATE, 0, LPARAM(@ToolInfo));
+    end;
+end;
+
+procedure TTreeView.ShowToolTip;
+var
+  ToolInfo: TToolInfo;
+begin
+  if FToolTipWnd <> 0 then
+    begin
+      ZeroMemory(@ToolInfo, SizeOf(ToolInfo));
+      ToolInfo.cbSize := SizeOf(ToolInfo);
+      ToolInfo.hwnd := FHandle;
+      ToolInfo.uId := FHandle;
+      SendMessage(FToolTipWnd, TTM_TRACKACTIVATE, 1, LPARAM(@ToolInfo));
+    end;
+end;
+
+procedure TTreeView.SetToolTipItem(AToolTipItem: TTreeViewItem);
+
+  function PrepareInfoTip: Boolean;
+  var
+    NMTVGetInfoTip: TNMTVGetInfoTipW;
+    DC: HDC;
+    SaveFont: HFONT;
+    DeltaX, DeltaY: Integer;
+    Point: TPoint;
+  begin
+    NMTVGetInfoTip.pszText := TempTextBuffer;
+    ZeroMemory(NMTVGetInfoTip.pszText, TempTextBufferSize);
+    NMTVGetInfoTip.cchTextMax := TempTextBufferSize div SizeOf(WideChar);
+    NMTVGetInfoTip.hItem := HTREEITEM(FToolTipItem);
+    NMTVGetInfoTip.lParam := FToolTipItem.FParam;
+    SendNotify(TVN_GETINFOTIPW, @NMTVGetInfoTip);
+    FToolTipTextText := NMTVGetInfoTip.pszText;
+    Result := FToolTipTextText <> '';
+    if not Result then Exit;
+
+    FToolTipTextRect.Left := FToolTipItem.FLeft;
+    FToolTipTextRect.Top := FToolTipItem.FTop + FToolTipItem.FHeight;
+    FToolTipTextRect.Right := FToolTipTextRect.Left;
+    FToolTipTextRect.Bottom := FToolTipTextRect.Top;
+
+    DC := GetDC(FHandle);
+    SaveFont := SelectObject(DC, Font);
+    DrawTextExW(DC, PWideChar(FToolTipTextText), Length(FToolTipTextText), FToolTipTextRect, DT_CALCRECT or DT_NOPREFIX, nil);
+    SelectObject(DC, SaveFont);
+    ReleaseDC(FHandle, DC);
+
+    OffsetItemRect(FToolTipTextRect);
+    FToolTipRect := FToolTipTextRect;
+    OffsetRect(FToolTipTextRect, -FToolTipRect.Left, -FToolTipRect.Top);
+
+    DeltaX := FToolTipRect.Left;
+    DeltaY := FToolTipRect.Top;
+    SendMessage(FToolTipWnd, TTM_ADJUSTRECT, 1, LPARAM(@FToolTipRect));
+    DeltaX := DeltaX - FToolTipRect.Left;
+    DeltaY := DeltaY - FToolTipRect.Top;
+    Point.X := FToolTipRect.Left;
+    Point.Y := FToolTipRect.Top;
+    ClientToScreen(FHandle, Point);
+    OffsetRect(FToolTipRect, Point.X - FToolTipRect.Left, Point.Y - FToolTipRect.Top);
+    OffsetRect(FToolTipRect, DeltaX, DeltaY);
+    SendMessage(FToolTipWnd, TTM_TRACKPOSITION, 0, MakeLParam(Point.X, Point.Y));
+  end;
+
+  function PrepareToolTip: Boolean;
+  var
+    Point: TPoint;
+  begin
+    FToolTipTextText := FToolTipItem.Text;
+    Result := FToolTipTextText <> '';
+    if FToolTipTextText = '' then Exit;
+
+    FToolTipTextRect := FToolTipItem.TextRect;
+    OffsetItemRect(FToolTipTextRect);
+
+    if RichToolTip and FToolTipItem.HasIcon then
+      begin
+        FToolTipIconRect := FToolTipItem.IconRect;
+        OffsetItemRect(FToolTipIconRect);
+      end
+    else
+      FToolTipIconRect := FToolTipTextRect;
+
+    FToolTipRect.Left := Min(FToolTipTextRect.Left, FToolTipIconRect.Left);
+    FToolTipRect.Top := Min(FToolTipTextRect.Top, FToolTipIconRect.Top);
+    FToolTipRect.Right := Max(FToolTipTextRect.Right, FToolTipIconRect.Right);
+    FToolTipRect.Bottom := Max(FToolTipTextRect.Bottom, FToolTipIconRect.Bottom);
+
+    OffsetRect(FToolTipIconRect, -FToolTipRect.Left, -FToolTipRect.Top);
+    OffsetRect(FToolTipTextRect, -FToolTipRect.Left, -FToolTipRect.Top);
+
+    SendMessage(FToolTipWnd, TTM_ADJUSTRECT, 1, LPARAM(@FToolTipRect));
+    Point.X := FToolTipRect.Left;
+    Point.Y := FToolTipRect.Top;
+    ClientToScreen(FHandle, Point);
+    OffsetRect(FToolTipRect, Point.X - FToolTipRect.Left, Point.Y - FToolTipRect.Top);
+    SendMessage(FToolTipWnd, TTM_TRACKPOSITION, 0, MakeLParam(Point.X, Point.Y));
+  end;
+
+var
+  TextRect: TRect;
+  ClientRect: TRect;
+  TextOutOfWindow: Boolean;
+begin
+  if FToolTipItem = AToolTipItem then Exit;
+  FToolTipItem := AToolTipItem;
+  FNeedHoverToolTip := False;
+
+  if NoToolTips or not Assigned(FToolTipItem) then
+    begin
+      HideToolTip;
+      Exit;
+    end;
+
+  TextRect := FToolTipItem.TextRect;
+  OffsetItemRect(TextRect);
+  GetClientRect(FHandle, ClientRect);
+  TextOutOfWindow :=
+   (TextRect.Left < ClientRect.Left) or
+   (TextRect.Top < ClientRect.Top) or
+   (TextRect.Right > ClientRect.Right) or
+   (TextRect.Bottom > ClientRect.Bottom);
+
+  if TextOutOfWindow then
+    begin
+      CreateTooltipWnd;
+      if FToolTipWnd <> 0 then
+        begin
+          FToolTipInfoTip := InfoTip and PrepareInfoTip;
+          if not FToolTipInfoTip then
+            if not PrepareToolTip then
+              begin
+                HideToolTip;
+                Exit;
+              end;
+          ShowToolTip;
+        end;
+    end
+  else
+    if InfoTip then
+      begin
+        HideToolTip;
+        CreateTooltipWnd;
+        if FToolTipWnd <> 0 then
+          begin
+            FToolTipInfoTip := PrepareInfoTip;
+            FNeedHoverToolTip := FToolTipInfoTip;
+          end;
+      end
+    else
+      HideToolTip;
+end;
+
+function TTreeView.ToolTipNotify(ANMHdr: PNMHdr): LRESULT;
+var
+  NMTTDispInfo: PNMTTDispInfo;
+  Str: string;
+  NMTTCustomDraw: PNMTTCustomDraw;
+  R: TRect;
+  Monitor: HMONITOR;
+  MonitorInfo: TMonitorInfo;
+  Offset: Integer;
+  SaveFont: HFONT;
+begin
+  Result := 0;
+  case ANMHdr.code of
+    TTN_GETDISPINFO:
+      begin
+        NMTTDispInfo := PNMTTDispInfo(ANMHdr);
+        if Assigned(ToolTipItem) then
+          begin
+            Str := ' ';
+            if Length(Str) >= Length(NMTTDispInfo.szText) then
+              SetLength(Str, Length(NMTTDispInfo.szText - 1));
+            if Str = '' then
+              NMTTDispInfo.szText[0] := #0
+            else
+              CopyMemory(@NMTTDispInfo.szText[0], PChar(Str), (Length(Str) + 1) * SizeOf(Char));
+          end;
+      end;
+    NM_CUSTOMDRAW:
+      begin
+        NMTTCustomDraw := PNMTTCustomDraw(ANMHdr);
+        case NMTTCustomDraw.nmcd.dwDrawStage of
+          CDDS_PREPAINT:
+            Result := CDRF_NOTIFYPOSTPAINT;
+          CDDS_POSTPAINT:
+            if Assigned(ToolTipItem) then
+            begin
+              R := FToolTipTextRect;
+              OffsetRect(R, NMTTCustomDraw.nmcd.rc.Left, NMTTCustomDraw.nmcd.rc.Top);
+              if FToolTipInfoTip then
+                begin
+                  SaveFont := SelectObject(NMTTCustomDraw.nmcd.hdc, Font);
+                  SetBkMode(NMTTCustomDraw.nmcd.hdc, TRANSPARENT);
+                  DrawTextExW(NMTTCustomDraw.nmcd.hdc, PWideChar(FToolTipTextText), Length(FToolTipTextText), R, DT_NOPREFIX, nil);
+                  SelectObject(NMTTCustomDraw.nmcd.hdc, SaveFont);
+                end
+              else
+                begin
+                  FToolTipItem.PaintText(NMTTCustomDraw.nmcd.hdc, R, GetTextColor(NMTTCustomDraw.nmcd.hdc));
+
+                  if RichToolTip and ToolTipItem.HasIcon then
+                    begin
+                      R := FToolTipIconRect;
+                      OffsetRect(R, NMTTCustomDraw.nmcd.rc.Left, NMTTCustomDraw.nmcd.rc.Top);
+                      ToolTipItem.PaintIcon(NMTTCustomDraw.nmcd.hdc, R);
+                    end;
+                end;
+            end;
+        end;
+      end;
+    TTN_SHOW:
+      begin
+        R := FToolTipRect;
+
+        Monitor := MonitorFromWindow(FHandle, MONITOR_DEFAULTTONEAREST);
+        MonitorInfo.cbSize := SizeOf(MonitorInfo);
+        if GetMonitorInfoW(Monitor, @MonitorInfo) then
+          begin
+            Offset := R.Right - MonitorInfo.rcWork.Right;
+            if Offset > 0 then
+              begin
+                Dec(R.Left, Offset);
+                Dec(R.Right, Offset);
+              end;
+            Offset := R.Bottom - MonitorInfo.rcWork.Bottom;
+            if Offset > 0 then
+              begin
+                Dec(R.Top, Offset);
+                Dec(R.Bottom, Offset);
+              end;
+            Offset := R.Left - MonitorInfo.rcWork.Left;
+            if Offset < 0 then
+              begin
+                Dec(R.Left, Offset);
+                Dec(R.Right, Offset);
+              end;
+            Offset := R.Top - MonitorInfo.rcWork.Top;
+            if Offset < 0 then
+              begin
+                Dec(R.Top, Offset);
+                Dec(R.Bottom, Offset);
+              end;
+          end;
+
+        with R do
+          SetWindowPos(FToolTipWnd, 0, Left, Top, Right - Left, Bottom - Top, SWP_NOACTIVATE or SWP_NOZORDER);
+        Result := 1;
+      end;
+  else
+    Result := 0;
+  end;
+end;
+
 procedure TTreeView.HitTest(TVHitTestInfo: PTVHitTestInfo);
 var
   ClientRect: TRect;
@@ -4313,7 +4826,7 @@ begin
 
   if Count = 0 then Exit;
 
-	if RealCode = TVE_EXPAND then AItem.FState := AItem.FState or TVIS_EXPANDED
+ if RealCode = TVE_EXPAND then AItem.FState := AItem.FState or TVIS_EXPANDED
                            else AItem.FState := AItem.FState and not TVIS_EXPANDED;
 
   if not FDestroying and ANotify then
@@ -4334,6 +4847,7 @@ begin
       if not SelectItem(AItem, True, AAction, False) then
         begin
           FocusedItem.FState := FocusedItem.FState and not TVIS_SELECTED;
+          RemoveFromSelectedItems(FocusedItem);
           FFocusedItem := nil;
         end;
     end;
@@ -4434,6 +4948,7 @@ begin
           if not (ANotify and SendItemChangeNofify(TVN_ITEMCHANGINGW, FFocusedItem, OldState, NewState)) then
             begin
               FFocusedItem.FState := NewState;
+              RemoveFromSelectedItems(FFocusedItem);
               if ANotify then
                 SendItemChangeNofify(TVN_ITEMCHANGEDW, FFocusedItem, OldState, NewState);
             end;
@@ -4448,7 +4963,8 @@ begin
           NewState := AItem.FState or TVIS_SELECTED;
           if not (ANotify and SendItemChangeNofify(TVN_ITEMCHANGINGW, AItem, OldState, NewState)) then
             begin
-              AItem.FState := AItem.FState or TVIS_SELECTED;
+              AItem.FState := NewState;
+              AddToSelectedItems(AItem);
               if ANotify then
                 SendItemChangeNofify(TVN_ITEMCHANGEDW, AItem, OldState, NewState);
             end;
@@ -4518,7 +5034,7 @@ begin
     end;
 end;
 
-procedure TTreeView.SetHotItem(AHotItem: TTreeViewItem; const APoint: TPoint);
+procedure TTreeView.SetHotItemEx(AHotItem: TTreeViewItem; const APoint: TPoint);
 begin
   if FHotItem = AHotItem then Exit;
   if Assigned(FHotItem) then
@@ -4537,10 +5053,10 @@ begin
     end;
 end;
 
-{procedure TTreeView.SetHotItem(AHotItem: TTreeViewItem);
+procedure TTreeView.SetHotItem(AHotItem: TTreeViewItem);
 begin
-  SetHotItem(AHotItem, GetClientCursorPos);
-end;}
+  SetHotItemEx(AHotItem, GetClientCursorPos);
+end;
 
 procedure TTreeView.SetPressedItem(APressedItem: TTreeViewItem);
 begin
@@ -4558,6 +5074,125 @@ begin
   FDropItem := ADropItem;
   if Assigned(FDropItem) then
     InvalidateItem(FDropItem);
+end;
+
+procedure TTreeView.AddToSelectedItems(AItem: TTreeViewItem);
+var
+  ItemIndex: Integer;
+begin
+  for ItemIndex := 0 to FSelectedCount - 1 do
+    if FSelectedItems[ItemIndex] = AItem then Exit;
+  if Length(FSelectedItems) = FSelectedCount then
+    SetLength(FSelectedItems, FSelectedCount + 4);
+  FSelectedItems[FSelectedCount] := AItem;
+  Inc(FSelectedCount);
+end;
+
+procedure TTreeView.RemoveFromSelectedItems(AItem: TTreeViewItem);
+var
+  ItemIndex: Integer;
+  CopyCount: Integer;
+  Source, Dest: Pointer;
+  ItemSize: Integer;
+begin
+  for ItemIndex := 0 to FSelectedCount - 1 do
+    if FSelectedItems[ItemIndex] = AItem then
+      begin
+        CopyCount := FSelectedCount - ItemIndex - 1;
+        if CopyCount > 0 then
+          begin
+            Source := @FSelectedItems[ItemIndex + 1];
+            Dest := @FSelectedItems[ItemIndex];
+            ItemSize := THandle(Source) - THandle(Dest);
+            CopyMemory(Dest, Source, CopyCount * ItemSize);
+          end;
+        Dec(FSelectedCount);
+        Exit;
+      end;
+end;
+
+function TTreeView.FindNextSelected(APrevItem: TTreeViewItem): TTreeViewItem;
+var
+  ItemIndex: Integer;
+begin
+  Result := nil;
+  if not Assigned(APrevItem) then
+    begin
+      if FSelectedCount > 0 then
+        Result := FSelectedItems[0];
+    end
+  else
+    for ItemIndex := 0 to FSelectedCount - 1 do
+      if FSelectedItems[ItemIndex] = APrevItem then
+        begin
+          if ItemIndex < FSelectedCount - 1 then
+            Result := FSelectedItems[ItemIndex + 1];
+          Break;
+        end;
+end;
+
+function TTreeView.FindNextVisible(APrevItem: TTreeViewItem): TTreeViewItem;
+begin
+  Result := nil;
+  while Assigned(APrevItem) do
+    begin
+      if APrevItem.IsVisible then
+        begin
+          if APrevItem.Expanded and (APrevItem.Count > 0) then
+            begin
+              Result := APrevItem.Items[0];
+              Exit;
+            end
+          else
+            if APrevItem.Index_ < APrevItem.ParentItems.Count - 1 then
+              begin
+                Result := APrevItem.ParentItems.Items[APrevItem.Index_ + 1];
+                Exit;
+              end
+            else
+              begin
+                Result := APrevItem;
+                while Assigned(Result) do
+                  begin
+                    Result := Result.ParentItems.Parent;
+                    if Assigned(Result) then
+                      if Result.Index_ < Result.ParentItems.Count - 1 then
+                        begin
+                          Result := Result.ParentItems.Items[Result.Index_ + 1];
+                          Exit
+                        end;
+                  end;
+                Exit;
+              end;
+        end
+      else
+        APrevItem := APrevItem.ParentItems.Parent;
+    end;
+end;
+
+function TTreeView.FindPrevVisible(APrevItem: TTreeViewItem): TTreeViewItem;
+begin
+  Result := nil;
+  while Assigned(APrevItem) do
+    begin
+      if APrevItem.IsVisible then
+        begin
+          if APrevItem.Index_ > 0 then
+            begin
+              Result := APrevItem.ParentItems.Items[APrevItem.Index_ - 1];
+              while Result.Expanded and (Result.Count > 0) do
+                Result := Result.Items[Result.Count - 1];
+              Exit;
+            end
+          else
+            begin
+              Result := APrevItem.ParentItems.Parent;
+              Exit;
+            end;
+        end
+      else
+        APrevItem := APrevItem.ParentItems.Parent;
+    end;
 end;
 
 function TTreeView.GetClientCursorPos: TPoint;
@@ -4676,15 +5311,67 @@ begin
   end;
 end;
 
+
+function TTreeView.CanDrag(APoint: TPoint): Boolean;
+var
+  XDrag: Integer;
+  YDrag: Integer;
+  Rect: TRect;
+  Msg: TMsg;
+begin
+  Result := False;
+
+  XDrag := GetSystemMetrics(SM_CXDRAG);
+  YDrag := GetSystemMetrics(SM_CYDRAG);
+
+  Rect.left := APoint.x - XDrag;
+  Rect.top := APoint.y - YDrag;
+  Rect.right := APoint.x + XDrag;
+  Rect.bottom := APoint.y + YDrag;
+
+  SetCapture(FHandle);
+
+  while True do
+    begin
+      if PeekMessage(Msg, 0, 0, 0, PM_REMOVE or PM_NOYIELD) then
+        begin
+          if Msg.message = WM_MOUSEMOVE then
+            begin
+              APoint := GetClientCursorPos;
+                if PtInRect(Rect, APoint) then
+                  Continue
+                else
+                  begin
+                    ReleaseCapture;
+                    Result := True;
+                    Exit;
+                  end;
+            end
+          else
+            if (Msg.message >= WM_LBUTTONDOWN) and (Msg.message <= WM_RBUTTONDBLCLK) then
+              Break;
+          DispatchMessage(Msg);
+        end;
+
+       if GetCapture <> FHandle then Exit;
+    end;
+
+  ReleaseCapture;
+end;
+
 procedure TTreeView.LButtonDown(const APoint: TPoint);
 var
   CtrlPressed: Boolean;
   Item: TTreeViewItem;
   ItemPoint: TPoint;
 begin
+  HideToolTip;
   SetFocus(FHandle);
-  if SendNotify(NM_CLICK, nil) <> 0 then Exit;
-  if Count = 0 then Exit;
+  if Count = 0 then
+    begin
+      SendNotify(NM_CLICK, nil);
+      Exit;
+    end;
   ItemPoint := APoint;
   OffsetMousePoint(ItemPoint);
   Item := FItems.ItemAtPos(ItemPoint);
@@ -4697,25 +5384,36 @@ begin
         TVHT_ONITEMSTATEICON:
           if CheckBoxes then
             begin
+              if SendNotify(NM_CLICK, nil) <> 0 then Exit;
               Item.SelectNextCheckState;
               if Item.StateIndex <> 0 then
                 Item.PressCheckBox := True;
               FPressedItemRealClick := False;
+            end;
+        TVHT_ONITEMBUTTON:
+          begin
+            if SendNotify(NM_CLICK, nil) <> 0 then Exit;
+            ExpandItem(Item, TVE_TOGGLE, TVC_BYMOUSE, True);
+            FPressedItemRealClick := False;
+          end;
+      end;
+
+      if FPressedItemRealClick then
+        begin
+          if DisableDragDrop or not CanDrag(APoint) then
+            begin
+              if SendNotify(NM_CLICK, nil) <> 0 then Exit;
+              SelectItem(Item, True, TVC_BYMOUSE, CtrlPressed);
+              SendMouseNofify(TVN_ITEMLMOUSEDOWN, Item, ItemPoint);
             end
           else
             begin
               SelectItem(Item, True, TVC_BYMOUSE, CtrlPressed);
-              SendMouseNofify(TVN_ITEMLMOUSEDOWN, Item, ItemPoint);
+              SendTreeViewNotify(TVN_BEGINDRAGW, nil, Item, 0, @APoint);
+              FPressedItemRealClick := False;
+              PressedItem := nil;
             end;
-        TVHT_ONITEMBUTTON:
-          begin
-            ExpandItem(Item, TVE_TOGGLE, TVC_BYMOUSE, True);
-            FPressedItemRealClick := False;
-          end;
-      else
-        SelectItem(Item, True, TVC_BYMOUSE, CtrlPressed);
-        SendMouseNofify(TVN_ITEMLMOUSEDOWN, Item, ItemPoint);
-      end;
+        end;
     end
   else
     if IsHorzScrollBarVisible or IsVertScrollBarVisible then
@@ -4733,6 +5431,7 @@ end;
 
 procedure TTreeView.LButtonDblDown(const APoint: TPoint);
 begin
+  HideToolTip;
   if SendNotify(NM_DBLCLK, nil) <> 0 then Exit;
 end;
 
@@ -4759,12 +5458,13 @@ end;
 
 procedure TTreeView.MButtonDown(const APoint: TPoint);
 begin
+  HideToolTip;
   SetFocus(FHandle);
 end;
 
 procedure TTreeView.MButtonDblDown(const APoint: TPoint);
 begin
-
+  HideToolTip;
 end;
 
 procedure TTreeView.MButtonUp(const APoint: TPoint);
@@ -4773,13 +5473,33 @@ begin
 end;
 
 procedure TTreeView.RButtonDown(const APoint: TPoint);
+var
+  Item: TTreeViewItem;
+  ItemPoint: TPoint;
 begin
+  HideToolTip;
   SetFocus(FHandle);
-  if SendNotify(NM_RCLICK, nil) <> 0 then Exit;
+  if Count = 0 then
+    begin
+      SendNotify(NM_RCLICK, nil);
+      Exit;
+    end;
+  ItemPoint := APoint;
+  OffsetMousePoint(ItemPoint);
+  Item := FItems.ItemAtPos(ItemPoint);
+  if not Assigned(Item) or not CanDrag(APoint) then
+    begin
+      if not SendNotify(NM_RCLICK, nil) <> 0 then Exit;
+    end
+  else
+    begin
+      SendTreeViewNotify(TVN_BEGINRDRAGW, nil, Item, 0, @APoint);
+    end;
 end;
 
 procedure TTreeView.RButtonDblDown(const APoint: TPoint);
 begin
+  HideToolTip;
   if SendNotify(NM_RDBLCLK, nil) <> 0 then Exit;
 end;
 
@@ -4853,7 +5573,7 @@ begin
       if Assigned(PressedItem) then
         if Item <> PressedItem then
           Item := nil;
-      SetHotItem(Item, ItemPoint);
+      SetHotItemEx(Item, ItemPoint);
       if not Assigned(Item) then
         Item := PressedItem;
       if Assigned(Item) then
@@ -4861,24 +5581,33 @@ begin
           Item.MouseMove(ItemPoint);
           SendMouseNofify(TVN_ITEMMOUSEMOVE, Item, ItemPoint);
         end;
+      ToolTipItem := HotItem;
     end;
 end;
 
 procedure TTreeView.MouseHover(const APoint: TPoint);
 begin
+  FTrackMouse := False;
   TrackMouse;
+  if FNeedHoverToolTip then
+    begin
+      FNeedHoverToolTip := False;
+      if Assigned(FToolTipItem) then
+        ShowToolTip;
+    end;
 end;
 
 procedure TTreeView.MouseLeave(const APoint: TPoint);
 var
   ItemPoint: TPoint;
 begin
+  ToolTipItem := nil;
   FTrackMouse := False;
   if not FMoveMode then
     begin
       ItemPoint := APoint;
       OffsetMousePoint(ItemPoint);
-      SetHotItem(nil, ItemPoint);
+      SetHotItemEx(nil, ItemPoint);
     end;
 end;
 
@@ -4893,6 +5622,8 @@ var
   NewPos: Integer;
   X, Y: Integer;
 begin
+  HideToolTip;
+
   if AVert then
     begin
       if not IsVertScrollBarVisible then Exit;
@@ -5182,7 +5913,7 @@ begin
   Result := SendNotify(FParentHandle, FHandle, ACode, ANMHdr);
 end;
 
-function TTreeView.SendTreeViewNotify(ACode: Integer; AOldItem, ANewItem: TTreeViewItem; AAction: UINT): UINT;
+function TTreeView.SendTreeViewNotify(ACode: Integer; AOldItem, ANewItem: TTreeViewItem; AAction: UINT; APoint: PPoint = nil): UINT;
 var
   NMTreeView: TNMTreeViewW;
 begin
@@ -5222,6 +5953,11 @@ begin
       NMTreeView.itemNew.hItem := nil;
     end;
 
+  if Assigned(APoint) then
+    begin
+      NMTreeView.ptDrag := APoint^;
+    end;
+
   Result := SendNotify(ACode, @NMTreeView);
 end;
 
@@ -5253,10 +5989,17 @@ begin
     begin
       NMMouse.pt.X := NMMouse.pt.X - AItem.Left;
       NMMouse.pt.Y := NMMouse.pt.Y - AItem.Top;
-      NMMouse.dwItemSpec := {$IFDEF WIN64}DWORD_PTR(AItem){$ELSE}DWORD(AItem){$ENDIF};
+      NMMouse.dwItemSpec := DWORD_PTR(AItem);
       NMMouse.dwItemData := AItem.FParam;
     end;
   Result := SendNotify(ACode, @NMMouse) <> 0;
+end;
+
+function TTreeView.TempTextBuffer: Pointer;
+begin
+  if not Assigned(FTempTextBuffer) then
+    GetMem(FTempTextBuffer, TempTextBufferSize);
+  Result := FTempTextBuffer;
 end;
 
 type
@@ -5987,6 +6730,11 @@ begin
   Result.Y := HiWord(ALParam);
 end;
 
+function IsRootItem(ALParam: LPARAM): Boolean; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+begin
+  Result := (ALParam = LPARAM(TVI_ROOT)) or (ALParam = 0);
+end;
+
 function TTreeView.WndProc(AMsg: UINT; AWParam: WPARAM; ALParam: LPARAM): LRESULT;
 var
   {$IFDEF NATIVE_BORDERS}
@@ -6005,6 +6753,7 @@ var
   CursorPos: TPoint;
   XOffset, YOffset: Integer;
   PrevHideFocus: Boolean;
+  NMHdr: PNMHdr;
 begin
   Inc(FUpdateCount);
   try
@@ -6025,6 +6774,9 @@ begin
       WM_DESTROY:
         begin
           FDestroying := True;
+          if (FToolTipWnd <> 0) and FTooltipWndOwner then
+            DestroyWindow(FToolTipWnd);
+          FToolTipWnd := 0;
           if Assigned(FItems) then
             FItems.DeleteAll;
           CloseTheme;
@@ -6290,7 +7042,7 @@ begin
               TreeItem := FItems.ItemAtPos(CursorPos);
               if Assigned(TreeItem) then
                 begin
-                  NMMouse.dwItemSpec := {$IFDEF WIN64}DWORD_PTR(TreeItem){$ELSE}DWORD(TreeItem){$ENDIF};
+                  NMMouse.dwItemSpec := DWORD_PTR(TreeItem);
                   NMMouse.dwItemData := TreeItem.FParam;
                 end;
             end;
@@ -6308,6 +7060,15 @@ begin
                 SetCursor(FHandCursor);
               end;
         end;
+
+      TVM_SETTOOLTIPS:
+        begin
+          CreateTooltipWnd;
+          Result := FToolTipWnd;
+          FToolTipWnd := AWParam;
+        end;
+      TVM_GETTOOLTIPS:
+        Result := FToolTipWnd;
 
       WM_GETDLGCODE:
         Result := DLGC_WANTARROWS or DLGC_WANTCHARS;
@@ -6362,6 +7123,12 @@ begin
               end;
           end;
         end;
+      WM_NOTIFY:
+        begin
+          NMHdr := PNMHdr(ALParam);
+          if NMHdr.hwndFrom = FToolTipWnd then
+            Result := ToolTipNotify(NMHdr);
+        end;
 
       TVM_INSERTITEMA,
       TVM_INSERTITEMW:
@@ -6406,20 +7173,109 @@ begin
           if not Assigned(TreeItem) then Exit;
           Result := TreeItem.State and ALParam;
         end;
+      TVM_SETHOT:
+        begin
+          TreeItem := TTreeViewItem(ALParam);
+          SetHotItem(TreeItem);
+          Result := 1;
+        end;
       TVM_GETNEXTITEM:
         case AWParam of
           TVGN_ROOT:
             if Count > 0 then
               Result := LRESULT(Items[0]);
+          TVGN_DROPHILITE:
+            Result := LRESULT(DropItem);
           TVGN_CARET:
             Result := LRESULT(FocusedItem);
-        else
-          TreeItem := TTreeViewItem(ALParam);
-          if not Assigned(TreeItem) then Exit;
-          Result := LRESULT(TreeItem.ParentItems.GetNextItem(TreeItem, AWParam));
+          TVGN_NEXT:
+            begin
+              TreeItem := TTreeViewItem(ALParam);
+              if Assigned(TreeItem) then
+                begin
+                  if TreeItem.Index_ < TreeItem.ParentItems.Count - 1 then
+                    Result := LRESULT(TreeItem.ParentItems.Items[TreeItem.Index_ + 1]);
+                end;
+            end;
+          TVGN_PREVIOUS:
+            begin
+              TreeItem := TTreeViewItem(ALParam);
+              if Assigned(TreeItem) then
+                begin
+                  if TreeItem.Index_ > 0 then
+                    Result := LRESULT(TreeItem.ParentItems.Items[TreeItem.Index_ - 1]);
+                end;
+            end;
+          TVGN_PARENT:
+            begin
+              TreeItem := TTreeViewItem(ALParam);
+              if Assigned(TreeItem) then
+                Result := LRESULT(TreeItem.ParentItems.Parent);
+            end;
+          TVGN_CHILD:
+            begin
+              if IsRootItem(ALParam) then
+                begin
+                  if Count > 0 then
+                    Result := LRESULT(Items[0]);
+                end
+              else
+                begin
+                  TreeItem := TTreeViewItem(ALParam);
+                  if TreeItem.Count > 0 then
+                    Result := LRESULT(TreeItem.Items[0]);
+                end;
+            end;
+          TVGN_FIRSTVISIBLE:
+            if Count > 0 then
+              Result := LRESULT(Items[0]);
+          TVGN_NEXTVISIBLE:
+            begin
+              if IsRootItem(ALParam) then
+                begin
+                  if Count > 0 then
+                    Result := LRESULT(Items[0]);
+                end
+              else
+                begin
+                  TreeItem := TTreeViewItem(ALParam);
+                  Result := LRESULT(FindNextVisible(TreeItem));
+                end;
+            end;
+          TVGN_PREVIOUSVISIBLE:
+            begin
+              if IsRootItem(ALParam) then
+                begin
+                  if Count > 0 then
+                    begin
+                      TreeItem := Items[Count - 1];
+                      while TreeItem.Expanded and (TreeItem.Count > 0) do
+                        TreeItem := TreeItem.Items[TreeItem.Count - 1];
+                      Result := LRESULT(TreeItem);
+                    end;
+                end
+              else
+                begin
+                  TreeItem := TTreeViewItem(ALParam);
+                  Result := LRESULT(FindPrevVisible(TreeItem));
+                end;
+            end;
+          TVGN_LASTVISIBLE:
+            if Count > 0 then
+              begin
+                TreeItem := Items[Count - 1];
+                while TreeItem.Expanded and (TreeItem.Count > 0) do
+                  TreeItem := TreeItem.Items[TreeItem.Count - 1];
+                Result := LRESULT(TreeItem);
+              end;
+          TVGN_NEXTSELECTED:
+            if IsRootItem(ALParam) then
+              Result := LRESULT(FindNextSelected(nil))
+            else
+              Result := LRESULT(FindNextSelected(TTreeViewItem(ALParam)));
         end;
       TVM_DELETEITEM:
-        if (ALPARAM = LPARAM(TVI_ROOT)) or (ALPARAM = 0) then
+        if IsRootItem(ALParam) then
           begin
             FFocusedItem := nil;
             FFixedItem := nil;
@@ -6428,6 +7284,8 @@ begin
             FHotItem := nil;
             FPressedItem := nil;
             FDropItem := nil;
+            FSelectedCount := 0;
+            ToolTipItem := nil;
             if Assigned(FItems) then
               FItems.DeleteAll;
             Result := 1;
@@ -6481,7 +7339,7 @@ begin
       TVM_GETCOUNT:
         Result := FTotalCount;
       TVM_GETSELECTEDCOUNT:
-        if Assigned(FocusedItem) then Result := 1;
+        Result := FSelectedCount;
       TVM_HITTEST:
         begin
           TVHitTestInfo := PTVHitTestInfo(ALParam);
@@ -6495,6 +7353,12 @@ begin
         begin
           SetInsertMaskItemAfter(TTreeViewItem(ALParam), AWParam <> 0);
           Result := 1;
+        end;
+      TVM_CREATEDRAGIMAGE:
+        begin
+          TreeItem := TTreeViewItem(ALParam);
+          if Assigned(TreeItem) then
+            Result := CreateDragImage(TreeItem);
         end;
       TVM_GETITEMCHILDCOUNT:
         begin
@@ -6758,6 +7622,26 @@ begin
     else
       if NeedInvalidate then
         Invalidate;
+end;
+
+function TTreeView.GetDisableDragDrop: Boolean;
+begin
+  Result := FStyle and TVS_DISABLEDRAGDROP <> 0;
+end;
+
+function TTreeView.GetInfoTip: boolean;
+begin
+  Result := FStyle and TVS_INFOTIP <> 0;
+end;
+
+function TTreeView.GetNoToolTips: Boolean;
+begin
+  Result := FStyle and TVS_NOTOOLTIPS <> 0;
+end;
+
+function TTreeView.GetRichToolTip: Boolean;
+begin
+  Result := FStyle2 and TVS_EX_RICHTOOLTIP <> 0;
 end;
 
 procedure TTreeView.SetDpi(ADpi: UINT);

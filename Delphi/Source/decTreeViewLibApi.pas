@@ -1,5 +1,4 @@
 unit decTreeViewLibApi;
-
 interface
 
 {$if CompilerVersion > 15}

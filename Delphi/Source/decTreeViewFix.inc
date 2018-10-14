@@ -29,6 +29,8 @@ const
   TVIS_EX_ALL             = $0002;
   TVIS_EX_DISABLED        = $0002;
 
+  TVGN_NEXTSELECTED       = $000B;
+
 type
   TNMTVStateImageChanging = record
     hdr: NMHDR;
@@ -64,9 +66,6 @@ type
     lParam: LPARAM;
   end;
   PTVItemW = ^TTVItemW;
-
-  TTVItem = TTVItemW;
-  PTVItem = PTVItemW;
 
   TTVItemExA = record
     mask: UINT;
@@ -106,9 +105,6 @@ type
   end;
   PTVItemExW = ^TTVItemExW;
 
-  TTVItemEx = TTVItemExW;
-  PTVItemEx = PTVItemExW;
-
 const  
   TVM_GETITEMSTATE            = TV_FIRST + 39;
   TVM_SETLINECOLOR            = TV_FIRST + 40;
@@ -131,8 +127,13 @@ const
   TVN_ITEMCHANGEDW        = TVN_FIRST - 19;
   TVN_ASYNCDRAW           = TVN_FIRST - 20;
 
+  {$IFDEF UNICODE}
   TVN_ITEMCHANGING        = TVN_ITEMCHANGINGW;
   TVN_ITEMCHANGED         = TVN_ITEMCHANGEDW;
+  {$ELSE}
+  TVN_ITEMCHANGING        = TVN_ITEMCHANGINGA;
+  TVN_ITEMCHANGED         = TVN_ITEMCHANGEDA;
+  {$ENDIF}
 
 type
   TNMTVItemChange = record
@@ -161,3 +162,46 @@ function TreeView_SetItemW(hwnd: HWND; const pitem: TTVItemW): Bool;
 begin
   Result := SendMessage(hwnd, TVM_SETITEMW, 0, LPARAM(@pitem)) <> 0;
 end;
+
+const
+  TTN_GETDISPINFOA         = TTN_FIRST - 0;
+  TTN_NEEDTEXTA            = TTN_GETDISPINFOA;
+  TTN_GETDISPINFOW         = TTN_FIRST - 10;
+  TTN_NEEDTEXTW            = TTN_GETDISPINFOW;
+
+  {$IFDEF UNICODE}
+  TTN_GETDISPINFO         = TTN_GETDISPINFOW;
+  TTN_NEEDTEXT            = TTN_NEEDTEXTW;
+  {$ELSE}
+  TTN_GETDISPINFO         = TTN_GETDISPINFOA;
+  TTN_NEEDTEXT            = TTN_NEEDTEXTA;
+  {$ENDIF}
+
+  TTN_SHOW                = TTN_FIRST - 1;
+  TTN_POP                 = TTN_FIRST - 2;
+
+type
+  TNMTTDispInfoA = record
+    hdr: TNMHdr;
+    lpszText: LPSTR;
+    szText: array[0..79] of AnsiChar;
+    hinst: HINST;
+    uFlags: UINT;
+    lParam: LPARAM;
+  end;
+  PNMTTDispInfoA = ^TNMTTDispInfoA;
+
+  TNMTTDispInfoW = record
+    hdr: TNMHdr;
+    lpszText: LPWSTR;
+    szText: array[0..79] of WideChar;
+    hinst: HINST;
+    uFlags: UINT;
+    lParam: LPARAM;
+  end;
+  PNMTTDispInfoW = ^TNMTTDispInfoW;
+
+const
+  TTM_ADJUSTRECT          = WM_USER + 31;
+
+
