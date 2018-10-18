@@ -102,49 +102,14 @@ type
 implementation
 
 uses
-  SysUtils, ImgList, decTreeViewLibApi {$IFNDEF DLL_TEST_MODE}, decTreeViewLib{$ENDIF}
-  {$IFDEF USE_LOGS}, decTreeViewLibLogs{$ENDIF};
+  SysUtils, ImgList, decTreeViewLibApi {$IFDEF USE_LOGS}, decTreeViewLibLogs{$ENDIF};
 
 {$if CompilerVersion < 19}
+{$ALIGN ON}
+{$MINENUMSIZE 4}
 {$I decTreeViewFix.inc}
 {$ifend}
 
-{$IFDEF DLL_TEST_MODE}
-type
-  TInitTreeViewLib = function: ATOM; stdcall;
-
-var
-  TreeViewLib: HMODULE;
-  InitTreeViewLibProc: TInitTreeViewLib;
-
-const
-  TreeViewClassName: PChar = 'decTreeView';
-
-function InitTreeViewLib: ATOM;
-var
-  DllName: string;
-  Error: DWORD;
-begin
-  if TreeViewLib = 0 then
-    begin
-      DllName := ExtractFilePath(GetModuleName(HInstance)) +
-        {$IFDEF WIN64}'decTreeViewDll.64.dll'{$ELSE}'decTreeViewDll.32.dll'{$ENDIF};
-      TreeViewLib := LoadLibrary(PChar(DllName));
-      if TreeViewLib = 0 then
-        RaiseLastOSError;
-      @InitTreeViewLibProc := GetProcAddress(TreeViewLib, 'InitTreeViewLib');
-      if not Assigned(InitTreeViewLibProc) then
-        RaiseLastOSError;
-    end;
-  Result := InitTreeViewLibProc;
-end;
-
-procedure DoneTreeViewLib;
-begin
-  if TreeViewLib <> 0 then
-    FreeLibrary(TreeViewLib);
-end;
-{$ENDIF}
 
 constructor TdecTreeView.Create(AOwner: TComponent);
 begin
@@ -639,13 +604,6 @@ begin
   if AlternativeView then
     SetStyle(TVS_INFOTIP, AIntoTips);
 end;
-
-initialization
-
-finalization
-  {$IFDEF DLL_TEST_MODE}
-  DoneTreeViewLib;
-  {$ENDIF}
 
 
 end.

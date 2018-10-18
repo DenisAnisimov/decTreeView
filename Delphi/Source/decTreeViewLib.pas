@@ -19,8 +19,6 @@ Messages:
   TVM_GETITEMPARTRECT
   TVM_GETSCROLLTIME
   TVM_GETVISIBLECOUNT
-  TVM_MAPACCIDTOHTREEITEM
-  TVM_MAPHTREEITEMTOACCID
   TVM_SETAUTOSCROLLINFO
   TVM_SETITEMHEIGHT
   TVM_SETSCROLLTIME
@@ -29,7 +27,6 @@ Messages:
   TVM_SORTCHILDRENCB
 
 Notification:
-
   TVN_ASYNCDRAW
   TVN_BEGINLABELEDIT
   TVN_ENDLABELEDIT
@@ -76,7 +73,7 @@ interface
 {$ifend}
 
 uses
-  Windows, {$IFDEF DLL_MODE}decCommCtrl{$ELSE}CommCtrl{$ENDIF};
+  Windows;
 
 {$IFNDEF SUPPORTS_UNICODE_STRING}
 type
@@ -92,16 +89,18 @@ type
 {$ALIGN ON}
 {$MINENUMSIZE 4}
 
-const
-  TreeViewClassName: PChar = 'decTreeView';
-
 function InitTreeViewLib: ATOM; stdcall;
 
 implementation
 
 uses
-  Types, Messages, MultiMon, decTreeViewLibApi {$IFDEF DEBUG}, SysUtils{$ENDIF}
-  {$IFDEF USE_LOGS}, decShellLogs, decTreeViewLibLogs{$ENDIF};
+  Types, Messages, MultiMon,
+  {$IFDEF DLL_MODE}
+  decCommCtrl,
+  {$ELSE}
+  ActiveX, {$if CompilerVersion > 17}OleAcc,{$ifend} CommCtrl, SysUtils,
+  {$ENDIF}
+  decTreeViewLibApi {$IFDEF USE_LOGS}, decShellLogs, decTreeViewLibLogs{$ENDIF};
 
 {$if CompilerVersion < 23}
 {$I decTreeViewFix.inc}
@@ -118,6 +117,9 @@ const
     SNDMSG((hwnd), TVM_SETHOT, 0, (LPARAM)(hitem))}
 
   //TVSI_NOSINGLEEXPAND = $8000;
+
+const
+  OBJID_QUERYCLASSNAMEIDX = $FFFFFFF4;
 
 function Min(A, B: Integer): Integer; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
 begin
@@ -206,6 +208,8 @@ var
   UXThemeLib: HMODULE;
   DWMApiLib: HMODULE;
   User32Lib: HMODULE;
+  OleAccRcLib: HMODULE;
+  OleAccRcInited: Boolean;
 
 type
   THEMESIZE = UINT;
@@ -407,6 +411,8 @@ begin
     FreeLibrary(DWMApiLib);
   if User32Lib <> 0 then
     FreeLibrary(User32Lib);
+  if OleAccRcLib <> 0 then
+    FreeLibrary(OleAccRcLib);
 end;
 
 function CloseThemeData(ATheme: HTHEME): HRESULT;
@@ -761,6 +767,130 @@ end;
 
 type
   TTreeView = class;
+  TTreeViewItem = class;
+
+  (*
+  IID_INoMarshal
+  IID_IMarshal
+  IID_IIdentityUnmarshal (not documented)
+  IID_IUnknow
+  IID_IStdMarshalInfo
+  {334D391F-0E79-3B15-C9FF-EAC65DD07C42}
+  IID_IFastRundown
+  {334D391F-0E79-3B15-C9FF-EAC65DD07C42}
+  IID_IAgileObject
+  {334D391F-0E79-3B15-C9FF-EAC65DD07C42}
+  {77DD1250-139C-2BC3-BD95-900ACED61BE5}
+  {334D391F-0E79-3B15-C9FF-EAC65DD07C42}
+  {BFD60505-5A1F-4E41-88BA-A6FB07202DA9}
+  {334D391F-0E79-3B15-C9FF-EAC65DD07C42}
+  IID_IApplicationFrame
+  IID_IApplicationFrameManager
+  IID_IApplicationFrameEventHandler
+  IID_IStreamGroup
+  IID_iaudiodevicegraph
+  IID_IVpoContext
+  ?{9BC79C93-2289-4BB5-ABF4-3287FD9CAE39}
+  IID_IPimcContext2
+  ?{11456F96-09D1-4909-8F36-4EB74E42B93E}
+  {334D391F-0E79-3B15-C9FF-EAC65DD07C42}
+  {03FB5C57-D534-45F5-A1F4-D39556983875}
+  {334D391F-0E79-3B15-C9FF-EAC65DD07C42}
+  {2C258AE7-50DC-49FF-9D1D-2ECB9A52CDD7}
+  IID_IExternalConnection
+  {4C1E39E1-E3E3-4296-AA86-EC938D896E92}
+  IID_IServiceProvider
+  IID_IAccIdentity
+  *)
+
+  TUnknown = class(TObject, IUnknown)
+    // IUnknown
+  private
+    function QueryInterface(const AIID: TGUID; out AObj): HRESULT; virtual; stdcall;
+    function _AddRef: Integer; stdcall;
+    function _Release: Integer; stdcall;
+  private
+    FRefCount: Integer;
+  end;
+
+  TEnumVariant = class(TUnknown, IEnumVARIANT)
+  public
+    constructor Create(const AInts: array of Integer); overload;
+    constructor Create(const ATreeItems: array of TTreeViewItem; ACount: Integer); overload;
+    destructor Destroy; override;
+  private
+    function Next(ACount: LongWord; var AVariants : OleVariant; out AFetched: LongWord): HRESULT; stdcall;
+    function Skip(ACount: LongWord): HRESULT; stdcall;
+    function Reset: HRESULT; stdcall;
+    function Clone(out AEnum: IEnumVARIANT): HRESULT; stdcall;
+  private
+    FInts: array of Integer;
+    FIndex: LongWord;
+  end;
+
+  ITreeViewAccessibleHelper = interface
+  ['{9F2D3B72-A114-492F-8586-C27712442074}']
+    function Test: HRESULT;
+    procedure ResetTree;
+  end;
+
+  TTreeViewAccessibleHelper = class(TUnknown, ITreeViewAccessibleHelper)
+  public
+    constructor Create(ATree: TTreeView);
+  private
+    FTree: TTreeView;
+    function Test: HRESULT;
+    procedure ResetTree;
+  end;
+
+  TTreeViewAccessible = class(TUnknown, IOleWindow, IDispatch, IEnumVARIANT, IAccessible)
+  public
+    constructor Create(ATree: TTreeView; AHelper: ITreeViewAccessibleHelper);
+    destructor Destroy; override;
+  private
+    // IOleWindow
+    function GetWindow(out AWnd: HWnd): HRESULT; stdcall;
+    function ContextSensitiveHelp(AEnterMode: BOOL): HRESULT; stdcall;
+    // IDispatch
+    function GetTypeInfoCount(out ACount: Integer): HRESULT; stdcall;
+    function GetTypeInfo(AIndex, ALocaleID: Integer; out ATypeInfo): HRESULT; stdcall;
+    function GetIDsOfNames(const AIID: TGUID; ANames: Pointer; ANameCount, ALocaleID: Integer; ADispIDs: Pointer): HRESULT; stdcall;
+    function Invoke(ADispID: Integer; const AIID: TGUID; ALocaleID: Integer; AFlags: Word; var AParams; AVarResult, AExcepInfo, AArgErr: Pointer): HRESULT; stdcall;
+    // IEnumVARIANT
+    function Next(ACount: LongWord; var AVariants : OleVariant; out AFetched: LongWord): HRESULT; stdcall;
+    function Skip(ACount: LongWord): HRESULT; stdcall;
+    function Reset: HRESULT; stdcall;
+    function Clone(out AEnum: IEnumVARIANT): HRESULT; stdcall;
+    // IAccessible
+    function Get_accParent(out AParent: IDispatch): HRESULT; stdcall;
+    function Get_accChildCount(out AChildCount: Integer): HRESULT; stdcall;
+    function Get_accChild(AChildIndex: OleVariant; out AChild: IDispatch): HRESULT; stdcall;
+    function Get_accName(AChildIndex: OleVariant; out AName: WideString): HRESULT; stdcall;
+    function Get_accValue(AChildIndex: OleVariant; out AValue: WideString): HRESULT; stdcall;
+    function Get_accDescription(AChildIndex: OleVariant; out ADescription: WideString): HRESULT; stdcall;
+    function Get_accRole(AChildIndex: OleVariant; out ARole: OleVariant): HRESULT; stdcall;
+    function Get_accState(AChildIndex: OleVariant; out AState: OleVariant): HRESULT; stdcall;
+    function Get_accHelp(AChildIndex: OleVariant; out AHelp: WideString): HRESULT; stdcall;
+    function Get_accHelpTopic(out AHelpFile: WideString; AChildIndex: OleVariant; out ATopic: Integer): HRESULT; stdcall;
+    function Get_accKeyboardShortcut(AChildIndex: OleVariant; out AKeyboardShortcut: WideString): HRESULT; stdcall;
+    function Get_accFocus(out AChild: OleVariant): HRESULT; stdcall;
+    function Get_accSelection(out AChilds: OleVariant): HRESULT; stdcall;
+    function Get_accDefaultAction(AChildIndex: OleVariant; out ADefaultAction: WideString): HRESULT; stdcall;
+    function accSelect(AFlags: Integer; AChildIndex: OleVariant): HRESULT; stdcall;
+    function accLocation(out ALeft, ATop, AWidth, AHeight: Integer; AChildIndex: OleVariant): HRESULT; stdcall;
+    function accNavigate(ADirection: Integer; AStart: OleVariant; out ADest: OleVariant): HRESULT; stdcall;
+    function accHitTest(ALeft, ATop: Integer; out AChildIndex: OleVariant): HRESULT; stdcall;
+    function accDoDefaultAction(AChildIndex: OleVariant): HRESULT; stdcall;
+    function Set_accName(AAChildIndex: OleVariant; const AName: WideString): HRESULT; stdcall;
+    function Set_accValue(AAChildIndex: OleVariant; const AValue: WideString): HRESULT; stdcall;
+  private
+    FTree: TTreeView;
+    FHelper: ITreeViewAccessibleHelper;
+    FIndex: LongWord;
+    function Test: HRESULT; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
+    function TestChilds: HRESULT;
+    function TestChildsEx(const AChildIndex: OleVariant): HRESULT;
+  end;
 
   TGdiCache = class(TObject)
   public
@@ -858,6 +988,7 @@ type
     FParentItems: TTreeViewItems;
     FLevel: Integer;
     FIndex: Integer;
+    FAccessibleID: Integer;
 
     FState: UINT;
     FStateEx: UINT;
@@ -984,17 +1115,27 @@ type
     FTreeView: TTreeView;
     FParent: TTreeViewItem;
     FLevel: Integer;
+    FTotalCount: Integer; // Include all childs
+    procedure IncTotalCount;
+    procedure DecTotalCount;
   private
     Count: Integer;
     Items: array of TTreeViewItem;
+    //function GetTotalItem(AIndex: Integer): TTreeViewItem;
     property TreeView: TTreeView read FTreeView;
     property Parent: TTreeViewItem read FParent;
     property Level: Integer read FLevel;
+    //property TotalItems[AIndex: Integer]: TTreeViewItem read GetTotalItem;
   end;
 
   TAnimationMode = (amNone, amExpand, amCollapse);
   TAdditionalCheckState = (csPartial, csDimmed, csExclusion);
   TAdditionalCheckStates = set of TAdditionalCheckState;
+
+  TNotifyEvent = record
+    Event: DWORD;
+    Item: TTreeViewItem;
+  end;
 
   TTreeView = class(TObject)
   public
@@ -1142,6 +1283,19 @@ type
     FWheelAccumulator: array[Boolean] of Integer;
     FWheelActivity: array[Boolean] of Cardinal;
     function GetClientCursorPos: TPoint;
+
+    function DoGetLeftItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+    function DoGetUpItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+    function DoGetRightItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+    function DoGetDownItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+    function GetLastChildItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+    function GetPrevItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+    function GetNextItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+    function GetLeftItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+    function GetUpItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+    function GetRightItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+    function GetDownItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+
     procedure KeyDown(AKeyCode: DWORD; AFlags: DWORD);
     function CanDrag(APoint: TPoint): Boolean;
     procedure LButtonDown(const APoint: TPoint);
@@ -1165,6 +1319,19 @@ type
     function SendTreeViewNotify(ACode: Integer; AOldItem, ANewItem: TTreeViewItem; AAction: UINT; APoint: PPoint = nil): UINT;
     function SendItemChangeNofify(ACode: Integer; AItem: TTreeViewItem; AOldState, ANewState: UINT): Boolean;
     function SendMouseNofify(ACode: Integer; AItem: TTreeViewItem; const APoint: TPoint): Boolean; overload;
+  private
+    // MSAA routines
+    FAccessibleHelper: ITreeViewAccessibleHelper;
+    FAccessibleItems: array of TTreeViewItem;
+    FNextAccessibleID: Integer;
+    FNotifyEvents: array of TNotifyEvent;
+    FNotifyEventCount: Integer;
+    FNotifyEventPosition: Integer;
+    procedure AddToAccessibleList(AItem: TTreeViewItem);
+    procedure RemoveFromAccessibleList(AItem: TTreeViewItem);
+    function AccessibleIDToItem(AID: Integer): TTreeViewItem;
+    procedure NotifyWinEvent(AEvent: DWORD; AItem: TTreeViewItem);
+    procedure DoNotifyWinEvents;
   private
     // Main routines
     FTempTextBuffer: Pointer;
@@ -1246,6 +1413,7 @@ type
     FTotalCount: Integer;
     FIndent: Integer; // Dummy
     FItemHeight: Integer; // Dummy
+    function GetEnabled: Boolean; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
     procedure SetFocused(AFocused: Boolean);
     procedure SetNoScroll(ANoScroll: Boolean);
     procedure UpdateCheckBoxes;
@@ -1291,7 +1459,9 @@ type
     function GetCount: Integer;
     function GetItem(AIndex: Integer): TTreeViewItem;
 
+    property Enabled: Boolean read GetEnabled;
     property Focused: Boolean read FFocused write SetFocused;
+
     property AlwaysShowSelection: Boolean read FAlwaysShowSelection;
     property AutoCenter: Boolean read FAutoCenter;
     property Border: Boolean read FBorder;
@@ -1343,6 +1513,1303 @@ type
 
 const
   TempTextBufferSize = 1024 * 2;
+
+//**************************************************************************************************
+// TTreeViewAccessible
+//**************************************************************************************************
+
+function TUnknown.QueryInterface(const AIID: TGUID; out AObj): HRESULT;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendInIID(Self, 'QueryInterface', 'IID', @AIID);
+  {$ENDIF}
+  if GetInterface(AIID, AObj) then Result := S_OK
+                            else Result := E_NOINTERFACE;
+end;
+
+function TUnknown._AddRef: Integer;
+begin
+  {$IFDEF SUPPORTS_ATOMICINCREMENT}
+  Result := AtomicIncrement(FRefCount);
+  {$ELSE}
+  Result := InterlockedIncrement(FRefCount);
+  {$ENDIF}
+end;
+
+function TUnknown._Release: Integer;
+begin
+  {$IFDEF SUPPORTS_ATOMICINCREMENT}
+  Result := AtomicDecrement(FRefCount);
+  {$ELSE}
+  Result := InterlockedDecrement(FRefCount);
+  {$ENDIF}
+  if Result = 0 then
+    Destroy;
+end;
+
+//**************************************************************************************************
+// TTreeViewAccessibleHelper
+//**************************************************************************************************
+
+constructor TTreeViewAccessibleHelper.Create(ATree: TTreeView);
+begin
+  inherited Create;
+  FTree := ATree;
+end;
+
+function TTreeViewAccessibleHelper.Test: HRESULT;
+begin
+  if not Assigned(FTree) or FTree.FDestroying then
+    Result := CO_E_OBJNOTCONNECTED
+  else
+    Result := S_OK;
+end;
+
+procedure TTreeViewAccessibleHelper.ResetTree;
+begin
+  FTree := nil;
+end;
+
+//**************************************************************************************************
+// TEnumVariant
+//**************************************************************************************************
+
+constructor TEnumVariant.Create(const AInts: array of Integer);
+var
+  Index: Integer;
+begin
+  inherited Create;
+  SetLength(FInts, Length(AInts));
+  for Index := 0 to Length(AInts) - 1 do
+    FInts[Index] := AInts[Index];
+end;
+
+constructor TEnumVariant.Create(const ATreeItems: array of TTreeViewItem; ACount: Integer);
+var
+  Index: Integer;
+begin
+  inherited Create;
+  SetLength(FInts, ACount);
+  for Index := 0 to ACount - 1 do
+    FInts[Index] := ATreeItems[Index].FAccessibleID;
+end;
+
+destructor TEnumVariant.Destroy;
+begin
+  inherited Destroy;
+end;
+
+function TEnumVariant.Next(ACount: LongWord; var AVariants: OleVariant; out AFetched: LongWord): HRESULT;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IEnumVariant.Next';
+{$ENDIF}
+var
+  Index: LongWord;
+  Variant: PVariantArg;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    Index := 0;
+    Variant := @AVariants;
+    while (Index < ACount) and (FIndex < LongWord(Length(FInts))) do
+      begin
+        Variant.vt := VT_I4;
+        Variant.lVal := FInts[FIndex];
+        Inc(Variant);
+        Inc(Index);
+        Inc(FIndex);
+      end;
+    if Assigned(@AFetched) then
+      AFetched := Index;
+    if ACount = Index then Result := S_OK
+                      else Result := S_FALSE;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TEnumVariant.Skip(ACount: LongWord): HRESULT;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IEnumVariant.Skip';
+{$ENDIF}
+var
+  Index: LongWord;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    Index := 0;
+    while (Index < ACount) and (FIndex < LongWord(Length(FInts))) do
+      begin
+        Inc(Index);
+        Inc(FIndex);
+      end;
+    if ACount = Index then Result := S_OK
+                      else Result := S_FALSE;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TEnumVariant.Reset: HRESULT;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IEnumVariant.Reset';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  FIndex := 0;
+  Result := S_OK;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TEnumVariant.Clone(out AEnum: IEnumVARIANT): HRESULT;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IEnumVariant.Clone';
+{$ENDIF}
+var
+  Enum: TEnumVariant;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    Enum := TEnumVariant.Create(FInts);
+    Enum.FIndex := FIndex;
+    AEnum := Enum;
+    Result := S_OK;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+//**************************************************************************************************
+// TTreeViewAccessible
+//**************************************************************************************************
+
+constructor TTreeViewAccessible.Create(ATree: TTreeView; AHelper: ITreeViewAccessibleHelper);
+begin
+  inherited Create;
+  FTree := ATree;
+  FHelper := AHelper;
+end;
+
+destructor TTreeViewAccessible.Destroy;
+begin
+  FHelper := nil;
+  inherited Destroy;
+end;
+
+function TTreeViewAccessible.GetWindow(out AWnd: HWnd): HRESULT;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IOleWindow.GetWindow';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    AWnd := 0;
+    Result := Test;
+    if Result = S_OK then
+      AWnd := FTree.FHandle;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.ContextSensitiveHelp(AEnterMode: BOOL): HRESULT;
+begin
+  Result := E_NOTIMPL;
+end;
+
+function TTreeViewAccessible.GetTypeInfoCount(out ACount: Integer): HRESULT;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IDispatch.GetTypeInfoCount';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  try
+  {$ENDIF}
+    Result := E_NOTIMPL;
+  {$IFDEF USE_LOGS}
+  except
+    Result := E_FAIL;
+  end;
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.GetTypeInfo(AIndex, ALocaleID: Integer; out ATypeInfo): HRESULT;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IDispatch.GetTypeInfo';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  try
+  {$ENDIF}
+    Result := E_NOTIMPL;
+  {$IFDEF USE_LOGS}
+  except
+    Result := E_FAIL;
+  end;
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.GetIDsOfNames(const AIID: TGUID; ANames: Pointer; ANameCount, ALocaleID: Integer; ADispIDs: Pointer): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IDispatch.GetIDsOfNames';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  try
+  {$ENDIF}
+    Result := E_NOTIMPL;
+  {$IFDEF USE_LOGS}
+  except
+    Result := E_FAIL;
+  end;
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Invoke(ADispID: Integer; const AIID: TGUID; ALocaleID: Integer; AFlags: Word; var AParams; AVarResult, AExcepInfo, AArgErr: Pointer): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IDispatch.Invoke';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  try
+  {$ENDIF}
+    Result := E_NOTIMPL;
+  {$IFDEF USE_LOGS}
+  except
+    Result := E_FAIL;
+  end;
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Next(ACount: LongWord; var AVariants: OleVariant; out AFetched: LongWord): HRESULT;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IEnumVariant.Next';
+{$ENDIF}
+var
+  Index: LongWord;
+  Variant: PVariantArg;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    Index := 0;
+    Variant := @AVariants;
+    while (Index < ACount) and (FIndex < LongWord(Length(FTree.FAccessibleItems))) do
+      begin
+        if Assigned(FTree.FAccessibleItems[FIndex]) then
+          begin
+            Variant.vt := VT_I4;
+            Variant.lVal := FTree.FAccessibleItems[FIndex].FAccessibleID;
+            Variant.lVal := FIndex + 1;
+            Inc(Variant);
+            Inc(Index);
+          end;
+        Inc(FIndex);
+      end;
+    if Assigned(@AFetched) then
+      AFetched := Index;
+    if ACount = Index then Result := S_OK
+                      else Result := S_FALSE;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Skip(ACount: LongWord): HRESULT;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IEnumVariant.Skip';
+{$ENDIF}
+var
+  Index: LongWord;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    Index := 0;
+    while (Index < ACount) and (FIndex < LongWord(Length(FTree.FAccessibleItems))) do
+      begin
+        if Assigned(FTree.FAccessibleItems[FIndex]) then
+          Inc(Index);
+        Inc(FIndex);
+      end;
+    if ACount = Index then Result := S_OK
+                      else Result := S_FALSE;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Reset: HRESULT;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IEnumVariant.Reset';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  FIndex := 0;
+  Result := S_OK;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Clone(out AEnum: IEnumVARIANT): HRESULT;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IEnumVariant.Clone';
+{$ENDIF}
+var
+  Enum: TTreeViewAccessible;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    Enum := TTreeViewAccessible.Create(FTree, FHelper);
+    Enum.FIndex := FIndex;
+    AEnum := Enum;
+    Result := S_OK;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accParent(out AParent: IDispatch): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accParent';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    Pointer(AParent) := nil;
+    Result := Test;
+    if Result = S_OK then
+      Result := AccessibleObjectFromWindow(FTree.FParentHandle, OBJID_CLIENT, IID_IAccessible, Pointer(AParent));
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accChildCount(out AChildCount: Integer): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accChildCount';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    AChildCount := 0;
+    Result := TestChilds;
+    if Result = S_OK then
+      AChildCount := FTree.FTotalCount;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  if Result = S_OK then
+    LogSendOutInteger(Self, sCurrentMethod, 'AChildCount', AChildCount);
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accChild(AChildIndex: OleVariant; out AChild: IDispatch): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accChild';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  LogSendInOleVariant(Self, sCurrentMethod, 'AChildIndex', @AChildIndex);
+  {$ENDIF}
+  try
+    Pointer(AChild) := nil;
+    if TVariantArg(AChildIndex).vt <> VT_I4 then
+      Result := E_INVALIDARG
+    else
+      Result := S_FALSE;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accName(AChildIndex: OleVariant; out AName: WideString): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accName';
+{$ENDIF}
+var
+  Item: TTreeViewItem;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  LogSendInOleVariant(Self, sCurrentMethod, 'AChildIndex', @AChildIndex);
+  {$ENDIF}
+  try
+    Pointer(AName) := nil;
+    Result := TestChildsEx(AChildIndex);
+    if Result = S_OK then
+      begin
+        if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+          begin
+            Item := FTree.AccessibleIDToItem(TVariantArg(AChildIndex).lVal);
+            AName := Item.Text;
+          end
+        else
+          Result := S_FALSE;
+      end;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  if Result = S_OK then
+    LogSendOutParam(Self, sCurrentMethod, 'AName', AName);
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accValue(AChildIndex: OleVariant; out AValue: WideString): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accValue';
+{$ENDIF}
+var
+  Item: TTreeViewItem;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  LogSendInOleVariant(Self, sCurrentMethod, 'AChildIndex', @AChildIndex);
+  {$ENDIF}
+  try
+    Pointer(AValue) := nil;
+    Result := TestChildsEx(AChildIndex);
+    if Result = S_OK then
+      begin
+        if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+          begin
+            Item := FTree.AccessibleIDToItem(TVariantArg(AChildIndex).lVal);
+            AValue := IntToStr(Item.Level);
+          end
+        else
+          Result := DISP_E_MEMBERNOTFOUND;
+      end;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  if Result = S_OK then
+    LogSendOutParam(Self, sCurrentMethod, 'AValue', AValue);
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accDescription(AChildIndex: OleVariant; out ADescription: WideString): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accDescription';
+{$ENDIF}
+{var
+  Item: TTreeViewItem;}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  LogSendInOleVariant(Self, sCurrentMethod, 'AChildIndex', @AChildIndex);
+  {$ENDIF}
+  try
+    Pointer(ADescription) := nil;
+    Result := S_FALSE;
+    {Result := TestChildsEx(AChildIndex);
+    if Result = S_OK then
+      begin
+        if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+          begin
+            Item := FTree.FGlobalItems[TVariantArg(AChildIndex).lVal - 1];
+            ADescription := Item.Description;
+          end
+        else
+          ADescription := FTree.Description;
+      end;}
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  if Result = S_OK then
+    LogSendOutParam(Self, sCurrentMethod, 'ADescription', ADescription);
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accRole(AChildIndex: OleVariant; out ARole: OleVariant): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accRole';
+{$ENDIF}
+var
+  Item: TTreeViewItem;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  LogSendInOleVariant(Self, sCurrentMethod, 'AChildIndex', @AChildIndex);
+  {$ENDIF}
+  try
+    TVariantArg(ARole).vt := VT_EMPTY;
+    Result := TestChildsEx(AChildIndex);
+    if Result = S_OK then
+      begin
+        TVariantArg(ARole).vt := VT_I4;
+        if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+          begin
+            TVariantArg(ARole).lVal := ROLE_SYSTEM_OUTLINEITEM;
+            Item := FTree.AccessibleIDToItem(TVariantArg(AChildIndex).lVal);
+            if FTree.CheckBoxes and Item.HasStateIcon then
+              TVariantArg(ARole).lVal := ROLE_SYSTEM_CHECKBUTTON;
+          end
+        else
+          TVariantArg(ARole).lVal := ROLE_SYSTEM_OUTLINE;
+      end;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  if Result = S_OK then
+    LogSendOutParam(Self, sCurrentMethod, 'ARole', ROLE_SYSTEMToString(TVariantArg(ARole).lVal));
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accState(AChildIndex: OleVariant; out AState: OleVariant): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accState';
+{$ENDIF}
+var
+  Item: TTreeViewItem;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  LogSendInOleVariant(Self, sCurrentMethod, 'AChildIndex', @AChildIndex);
+  {$ENDIF}
+  try
+    TVariantArg(AState).vt := VT_EMPTY;
+    Result := TestChildsEx(AChildIndex);
+    if Result = S_OK then
+      begin
+        TVariantArg(AState).vt := VT_I4;
+        if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+          begin
+            Item := FTree.AccessibleIDToItem(TVariantArg(AChildIndex).lVal);
+            TVariantArg(AState).lVal := STATE_SYSTEM_FOCUSABLE or STATE_SYSTEM_SELECTABLE;
+            if Item.Selected then
+              TVariantArg(AState).lVal := TVariantArg(AState).lVal or STATE_SYSTEM_SELECTED;
+            if FTree.Focused and (FTree.FocusedItem = Item) then
+              TVariantArg(AState).lVal := TVariantArg(AState).lVal or STATE_SYSTEM_FOCUSED;
+            if FTree.CheckBoxes and Item.HasStateIcon then
+              case Item.StateIndex of
+                2: TVariantArg(AState).lVal := TVariantArg(AState).lVal or STATE_SYSTEM_CHECKED;
+                3: TVariantArg(AState).lVal := TVariantArg(AState).lVal or STATE_SYSTEM_MIXED;
+              end;
+            if Item.Expanded then
+              TVariantArg(AState).lVal := TVariantArg(AState).lVal or STATE_SYSTEM_EXPANDED
+            else
+              if Item.HasChildren then
+                TVariantArg(AState).lVal := TVariantArg(AState).lVal or STATE_SYSTEM_COLLAPSED;
+            if not Item.IsVisible then
+              TVariantArg(AState).lVal := TVariantArg(AState).lVal or STATE_SYSTEM_INVISIBLE or STATE_SYSTEM_OFFSCREEN;
+          end
+        else
+          begin
+            TVariantArg(AState).lVal := STATE_SYSTEM_FOCUSABLE;
+            if FTree.Focused then
+              TVariantArg(AState).lVal := TVariantArg(AState).lVal or STATE_SYSTEM_FOCUSED;
+            if not FTree.Enabled then
+              TVariantArg(AState).lVal := TVariantArg(AState).lVal or STATE_SYSTEM_UNAVAILABLE;
+          end;
+      end;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  if Result = S_OK then
+    LogSendOutParam(Self, sCurrentMethod, 'ARole', STATE_SYSTEMToString(TVariantArg(AState).lVal));
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accHelp(AChildIndex: OleVariant; out AHelp: WideString): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accHelp';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    Pointer(AHelp) := nil;
+    Result := S_FALSE;
+    {Result := TestChildsEx(AChildIndex);
+    if Result = S_OK then
+      begin
+        if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+          begin
+            Item := FTree.FGlobalItems[TVariantArg(AChildIndex).lVal - 1];
+            AHelp := Item.Help;
+          end
+        else
+          AHelp := FTree.Help;
+      end;}
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accHelpTopic(out AHelpFile: WideString; AChildIndex: OleVariant; out ATopic: Integer): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accHelpTopic';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    Pointer(AHelpFile) := nil;
+    ATopic := 0;
+    Result := S_FALSE;
+    {Result := TestChildsEx(AChildIndex);
+    if Result = S_OK then
+      begin
+        if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+          begin
+            Item := FTree.FGlobalItems[TVariantArg(AChildIndex).lVal - 1];
+            AHelpFile := Item.HelpFile;
+          end
+        else
+          AHelpFile := FTree.HelpFile;
+      end;}
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accKeyboardShortcut(AChildIndex: OleVariant; out AKeyboardShortcut: WideString): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accKeyboardShortcut';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    Pointer(AKeyboardShortcut) := nil;
+    Result := S_FALSE;
+    {Result := TestChildsEx(AChildIndex);
+    if Result = S_OK then
+      begin
+        if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+          begin
+            Item := FTree.FGlobalItems[TVariantArg(AChildIndex).lVal - 1];
+            AKeyboardShortcut := Item.KeyboardShortcut;
+          end
+        else
+          AKeyboardShortcut := FTree.KeyboardShortcut;
+      end;}
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accFocus(out AChild: OleVariant): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accFocus';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    TVariantArg(AChild).vt := VT_EMPTY;
+    Result := TestChilds;
+    if Result = S_OK then
+      begin
+        TVariantArg(AChild).vt := VT_I4;
+        if Assigned(FTree.FocusedItem) then
+          TVariantArg(AChild).lVal := FTree.FocusedItem.FAccessibleID
+        else
+          TVariantArg(AChild).lVal := CHILDID_SELF;
+      end;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Get_accSelection(out AChilds: OleVariant): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accSelection';
+{$ENDIF}
+var
+  Enum: IEnumVARIANT;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    TVariantArg(AChilds).vt := VT_EMPTY;
+    Result := TestChilds;
+    if Result = S_OK then
+      begin
+        case FTree.FSelectedCount of
+          0: Result := S_FALSE;
+          1: begin
+               TVariantArg(AChilds).vt := VT_I4;
+               TVariantArg(AChilds).lVal := FTree.FSelectedItems[0].FAccessibleID;
+             end
+        else
+          Enum := TEnumVariant.Create(FTree.FSelectedItems, FTree.FSelectedCount);
+          TVariantArg(AChilds).vt := VT_UNKNOWN;
+          Pointer(TVariantArg(AChilds).unkVal) := nil;
+          IUnknown(TVariantArg(AChilds).unkVal) := Enum;
+        end;
+      end;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+procedure LoadOleAccRc;
+begin
+  EnterCriticalSection(LibsCS);
+  if not OleAccRcInited then
+    begin
+      OleAccRcInited := True;
+      OleAccRcLib := LoadLibraryEx('OleAccRc.dll', 0, LOAD_LIBRARY_AS_DATAFILE);
+    end;
+  LeaveCriticalSection(LibsCS);
+end;
+
+function LoadString(AID: UINT): UnicodeString;
+var
+  ResultLen, L: Integer;
+begin
+  LoadOleAccRc;
+  if OleAccRcLib <> 0 then
+    begin
+      ResultLen := 8;
+      repeat
+        ResultLen := ResultLen * 2;
+        SetLength(Result, ResultLen);
+        L := LoadStringW(OleAccRcLib, AID, PWideChar(Result), ResultLen + 1);
+      until L <> ResultLen;
+      SetLength(Result, L);
+    end
+  else
+    Result := '';
+end;
+
+function LocalizedExpandAction: UnicodeString;
+begin
+  Result := LoadString(305);
+  if Result = '' then
+    Result := 'Expand';
+end;
+
+function LocalizedCollapseAction: UnicodeString;
+begin
+  Result := LoadString(306);
+  if Result = '' then
+    Result := 'Collapse';
+end;
+
+function TTreeViewAccessible.Get_accDefaultAction(AChildIndex: OleVariant; out ADefaultAction: WideString): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Get_accDefaultAction';
+{$ENDIF}
+var
+  Item: TTreeViewItem;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  LogSendInOleVariant(Self, sCurrentMethod, 'AChildIndex', @AChildIndex);
+  {$ENDIF}
+  try
+    Pointer(ADefaultAction) := nil;
+    Result := TestChildsEx(AChildIndex);
+    if Result = S_OK then
+      begin
+        if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+          begin
+            Item := FTree.AccessibleIDToItem(TVariantArg(AChildIndex).lVal);
+            if Item.Expanded then
+              ADefaultAction := LocalizedCollapseAction
+            else
+              if Item.HasChildren then
+                ADefaultAction := LocalizedExpandAction
+              else
+                Result := DISP_E_MEMBERNOTFOUND;
+          end
+        else
+          Result := S_FALSE;
+      end;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  if Result = S_OK then
+    LogSendOutParam(Self, sCurrentMethod, 'ADefaultAction', ADefaultAction);
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.accSelect(AFlags: Integer; AChildIndex: OleVariant): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.accSelect';
+{$ENDIF}
+var
+  Item: TTreeViewItem;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  LogSendInParam(Self, sCurrentMethod, 'AFlags', SELFLAGToString(AFlags));
+  try
+  {$ENDIF}
+    Result := TestChildsEx(AChildIndex);
+    if Result = S_OK then
+      begin
+        if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+          begin
+            if AFlags and (SELFLAG_TAKESELECTION or SELFLAG_TAKEFOCUS) <> 0 then
+              begin
+                Item := FTree.AccessibleIDToItem(TVariantArg(AChildIndex).lVal);
+                if SendMessage(FTree.FHandle, TVM_SELECTITEM, TVGN_CARET, LPARAM(Item)) = 0 then
+                  Result := S_FALSE;
+              end;
+          end;
+        if AFlags and SELFLAG_TAKEFOCUS <> 0 then
+          SetFocus(FTree.FHandle);
+      end;
+  {$IFDEF USE_LOGS}
+  except
+    Result := E_FAIL;
+  end;
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.accLocation(out ALeft, ATop, AWidth, AHeight: Integer; AChildIndex: OleVariant): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.accLocation';
+{$ENDIF}
+var
+  Item: TTreeViewItem;
+  Rect: TRect;
+  Point: TPoint;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  LogSendInOleVariant(Self, sCurrentMethod, 'AChildIndex', @AChildIndex);
+  {$ENDIF}
+  try
+    ALeft := 0;
+    ATop := 0;
+    AWidth := 0;
+    AHeight := 0;
+    Result := TestChildsEx(AChildIndex);
+    if Result = S_OK then
+      begin
+        if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+          begin
+            Item := FTree.AccessibleIDToItem(TVariantArg(AChildIndex).lVal);
+            if Item.IsVisible then
+              begin
+                Rect := Item.BoundsRect;
+                FTree.OffsetItemRect(Rect);
+              end
+            else
+              Result := S_FALSE;
+          end
+        else
+          GetClientRect(FTree.FHandle, Rect);
+        if Result = S_OK then
+          begin
+            Point.X := 0;
+            Point.Y := 0;
+            ClientToScreen(FTree.FHandle, Point);
+            OffsetRect(Rect, Point.X, Point.Y);
+            ALeft := Rect.Left;
+            ATop := Rect.Top;
+            AWidth := Rect.Right - Rect.Left;
+            AHeight := Rect.Bottom - Rect.Top;
+          end
+        else
+          Result := S_OK;
+      end;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.accNavigate(ADirection: Integer; AStart: OleVariant; out ADest: OleVariant): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.accNavigate';
+{$ENDIF}
+var
+  DestItem: TTreeViewItem;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    TVariantArg(ADest).vt := VT_EMPTY;
+    Result := TestChildsEx(AStart);
+    if Result = S_OK then
+      begin
+        if TVariantArg(AStart).lVal > CHILDID_SELF then
+          begin
+            DestItem := FTree.AccessibleIDToItem(TVariantArg(AStart).lVal);
+            case ADirection of
+              NAVDIR_UP:
+                DestItem := FTree.GetUpItem(DestItem, False);
+              NAVDIR_DOWN:
+                DestItem := FTree.GetDownItem(DestItem, False);
+              NAVDIR_LEFT:
+                DestItem := FTree.GetLeftItem(DestItem, False);
+              NAVDIR_RIGHT:
+                DestItem := FTree.GetRightItem(DestItem, False);
+              NAVDIR_NEXT:
+                DestItem := FTree.GetNextItem(DestItem, False);
+              NAVDIR_PREVIOUS:
+                DestItem := FTree.GetPrevItem(DestItem, False);
+              NAVDIR_FIRSTCHILD,
+              NAVDIR_LASTCHILD:
+                Result := S_FALSE;
+            else
+              Result := E_INVALIDARG;
+            end;
+            if Result = S_OK then
+              if Assigned(DestItem) then
+                begin
+                  TVariantArg(ADest).vt := VT_I4;
+                  TVariantArg(ADest).lVal := DestItem.FAccessibleID;
+                end
+              else
+                Result := S_FALSE;
+          end
+        else
+          case ADirection of
+            NAVDIR_UP,
+            NAVDIR_DOWN,
+            NAVDIR_LEFT,
+            NAVDIR_RIGHT,
+            NAVDIR_NEXT,
+            NAVDIR_PREVIOUS:
+              Result := S_FALSE;
+            NAVDIR_FIRSTCHILD,
+            NAVDIR_LASTCHILD:
+              if FTree.FTotalCount > 0 then
+                begin
+                  if ADirection = NAVDIR_FIRSTCHILD then
+                    DestItem := FTree.Items[0]
+                  else
+                    begin
+                      DestItem := FTree.Items[FTree.Count - 1];
+                      while DestItem.Count > 0 do
+                        DestItem := DestItem.Items[DestItem.Count - 1];
+                    end;
+                  TVariantArg(ADest).vt := VT_I4;
+                  TVariantArg(ADest).lVal := DestItem.FAccessibleID;
+                end
+              else
+                Result := S_FALSE;
+          else
+            Result := E_INVALIDARG;
+          end;
+      end;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.accHitTest(ALeft, ATop: Integer; out AChildIndex: OleVariant): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.accHitTest';
+{$ENDIF}
+var
+  Point: TPoint;
+  Item: TTreeViewItem;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  LogSendInOleVariant(Self, sCurrentMethod, 'Child', @AChildIndex);
+  {$ENDIF}
+  try
+    TVariantArg(AChildIndex).vt := VT_EMPTY;
+    Result := Test;
+    if Result = S_OK then
+      begin
+        Point.X := ALeft;
+        Point.Y := ATop;
+        if WindowFromPoint(Point) <> FTree.FHandle then
+          Result := S_FALSE
+        else
+          begin
+            Result := TestChilds;
+            if Result = S_OK then
+              begin
+                TVariantArg(AChildIndex).vt := VT_I4;
+                TVariantArg(AChildIndex).lVal := CHILDID_SELF;
+                if FTree.Count > 0 then
+                  begin
+                    ScreenToClient(FTree.FHandle, Point);
+                    FTree.OffsetMousePoint(Point);
+                    Item := FTree.FItems.ItemAtPos(Point);
+                    if Assigned(Item) then
+                      TVariantArg(AChildIndex).lVal := Item.FAccessibleID;
+                  end;
+              end;
+          end;
+      end;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.accDoDefaultAction(AChildIndex: OleVariant): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.accDoDefaultAction';
+{$ENDIF}
+var
+  Item: TTreeViewItem;
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  {$ENDIF}
+  try
+    Result := TestChildsEx(AChildIndex);
+    if Result = S_OK then
+      begin
+        if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+          begin
+            Item := FTree.AccessibleIDToItem(TVariantArg(AChildIndex).lVal);
+            if Item.Expanded then
+              SendMessage(FTree.FHandle, TVM_EXPAND, TVE_COLLAPSE, LPARAM(Item))
+            else
+              if Item.HasChildren then
+                SendMessage(FTree.FHandle, TVM_EXPAND, TVE_EXPAND, LPARAM(Item))
+              else
+                Result := DISP_E_MEMBERNOTFOUND;
+          end
+        else
+          Result := DISP_E_MEMBERNOTFOUND;
+      end;
+  except
+    Result := E_FAIL;
+  end;
+  {$IFDEF USE_LOGS}
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Set_accName(AAChildIndex: OleVariant; const AName: WideString): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Set_accName';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  try
+  {$ENDIF}
+    Result := E_NOTIMPL;
+  {$IFDEF USE_LOGS}
+  except
+    Result := E_FAIL;
+  end;
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Set_accValue(AAChildIndex: OleVariant; const AValue: WideString): HRESULT; stdcall;
+{$IFDEF USE_LOGS}
+const
+  sCurrentMethod = 'IAccessible.Set_accValue';
+{$ENDIF}
+begin
+  {$IFDEF USE_LOGS}
+  LogSendEnter(Self, sCurrentMethod);
+  try
+  {$ENDIF}
+    Result := E_NOTIMPL;
+  {$IFDEF USE_LOGS}
+  except
+    Result := E_FAIL;
+  end;
+  LogSendResult(Self, sCurrentMethod, Result);
+  LogSendExit(Self, sCurrentMethod);
+  {$ENDIF}
+end;
+
+function TTreeViewAccessible.Test: HRESULT;
+begin
+  Result := FHelper.Test;
+end;
+
+function TTreeViewAccessible.TestChilds: HRESULT;
+begin
+  Result := Test;
+  if Result <> S_OK then Exit;
+  if FTree.FLockUpdate then
+    Result := CO_E_OBJNOTCONNECTED // Need more accurate result
+end;
+
+function TTreeViewAccessible.TestChildsEx(const AChildIndex: OleVariant): HRESULT;
+var
+  Item: TTreeViewItem;
+begin
+  Result := TestChilds;
+  if Result <> S_OK then Exit;
+  if TVariantArg(AChildIndex).vt <> VT_I4 then
+    Result := E_INVALIDARG
+  else
+    if TVariantArg(AChildIndex).lVal > CHILDID_SELF then
+      begin
+        Item := FTree.AccessibleIDToItem(TVariantArg(AChildIndex).lVal);
+        if not Assigned(Item) then
+          Result := E_INVALIDARG;
+      end;
+end;
 
 //**************************************************************************************************
 // TTreeViewItem
@@ -1471,12 +2938,19 @@ begin
   FImageIndex := 0;
   FSelectedImageIndex := 0;
   FExpandedImageIndex := I_IMAGECALLBACK;
+  FTreeView.AddToAccessibleList(Self);
+  FTreeView.NotifyWinEvent(EVENT_OBJECT_CREATE, Self);
 end;
 
 destructor TTreeViewItem.Destroy;
 begin
   if Assigned(FItems) then
     FItems.Free;
+  if Assigned(FTreeView) then
+    begin
+      FTreeView.RemoveFromAccessibleList(Self);
+      FTreeView.NotifyWinEvent(EVENT_OBJECT_DESTROY, Self);
+    end;
   inherited Destroy;
 end;
 
@@ -1554,12 +3028,16 @@ begin
           FTextCallback := True;
           FText := '';
           NeedUpdate := True;
+          FTreeView.NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, Self);
         end
       else
         begin
           NewText := AItem.pszText;
           if FTextCallback or (NewText <> FText) then
-            NeedUpdate := True;
+            begin
+              NeedUpdate := True;
+              FTreeView.NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, Self);
+            end;
           FTextCallback := False;
           FText := NewText;
         end;
@@ -1654,7 +3132,10 @@ begin
             if Bold <> PrevBold then
               NeedUpdate := True;
             if Expanded <> PrevExpanded then
-              NeedInvalidate := True;
+              begin
+                NeedInvalidate := True;
+                FTreeView.NotifyWinEvent(EVENT_OBJECT_STATECHANGE, Self);
+              end;
             if Selected <> PrevSelected then
               NeedInvalidate := True;
 
@@ -1968,6 +3449,7 @@ begin
         begin
           FState := NewState;
           TreeView.SendItemChangeNofify(TVN_ITEMCHANGEDW, Self, PrevState, NewState);
+          FTreeView.NotifyWinEvent(EVENT_OBJECT_STATECHANGE, Self);
         end;
     end;
 
@@ -2016,6 +3498,8 @@ begin
         end
       else
         Invalidate;
+      FTreeView.NotifyWinEvent(EVENT_OBJECT_STATECHANGE, Self);
+      FTreeView.NotifyWinEvent(EVENT_OBJECT_INVOKED, Self);
     end;
 end;
 
@@ -2307,8 +3791,8 @@ begin
   else
     begin
       {$IFDEF DEBUG}
-      if (IconIndex < 1) or (IconIndex > TreeView.FCheckBoxStateCount) then
-        RaiseLastOSError(ERROR_INVALID_DATA);
+      {if (IconIndex < 1) or (IconIndex > TreeView.FCheckBoxStateCount) then
+        RaiseLastOSError(ERROR_INVALID_DATA);}
       {$ENDIF}
       StateId := TreeView.FCheckBoxStates[IconIndex];
       NeedPaintExclude := False;
@@ -2921,6 +4405,7 @@ begin
   for ItemIndex := Pos to Count - 1 do
     Items[ItemIndex].Index_ := ItemIndex;
   Inc(TreeView.FTotalCount);
+  IncTotalCount;
 
   if Assigned(Parent) and (Count = 1) and TreeView.HasButtons then
     Parent.NeedUpdateSize;
@@ -3053,6 +4538,7 @@ begin
   for ItemIndex := Position to Count - 1 do
     Items[ItemIndex].Index_ := ItemIndex;
   Dec(TreeView.FTotalCount);
+  DecTotalCount;
 
   AItem.Free;
   if Assigned(Parent) and (Count = 0) and TreeView.HasButtons then
@@ -3085,6 +4571,47 @@ begin
   Result := nil;
 end;
 
+procedure TTreeViewItems.IncTotalCount;
+begin
+  Inc(FTotalCount);
+  if Assigned(FParent) and Assigned(FParent.FParentItems) then
+    FParent.FParentItems.IncTotalCount;
+end;
+
+procedure TTreeViewItems.DecTotalCount;
+begin
+  Dec(FTotalCount);
+  if Assigned(FParent) and Assigned(FParent.FParentItems) then
+    FParent.FParentItems.DecTotalCount;
+end;
+
+{function TTreeViewItems.GetTotalItem(AIndex: Integer): TTreeViewItem;
+var
+  ItemIndex: Integer;
+  Delta: Integer;
+begin
+  for ItemIndex := 0 to Count - 1 do
+    begin
+      if AIndex = 0 then
+        begin
+          Result := Items[ItemIndex];
+          Exit;
+        end;
+
+      if Items[ItemIndex].Count > 0 then Delta := Items[ItemIndex].FItems.FTotalCount + 1
+                                    else Delta := 1;
+      if AIndex < Delta then
+        begin
+          Dec(AIndex);
+          Result := Items[ItemIndex].FItems.TotalItems[AIndex];
+          Exit;
+        end
+      else
+        Dec(AIndex, Delta);
+    end;
+  Result := nil;
+end;}
+
 //**************************************************************************************************
 // TTreeView
 //**************************************************************************************************
@@ -3114,6 +4641,11 @@ end;
 destructor TTreeView.Destroy;
 begin
   FDestroying := True;
+  if Assigned(FAccessibleHelper) then
+    begin
+      FAccessibleHelper.ResetTree;
+      FAccessibleHelper := nil;
+    end;
   if Assigned(FItems) then
     FItems.Free;
   if Assigned(FTempTextBuffer) then
@@ -4504,13 +6036,9 @@ procedure TTreeView.SetToolTipItem(AToolTipItem: TTreeViewItem);
       FToolTipRect.Bottom := SaveRect.Bottom + MinBorder;
   end;
 
-  function PrepareInfoTip: Boolean;
+  function HasInfoTip: Boolean;
   var
     NMTVGetInfoTip: TNMTVGetInfoTipW;
-    DC: HDC;
-    SaveFont: HFONT;
-    DeltaX, DeltaY: Integer;
-    Point: TPoint;
   begin
     NMTVGetInfoTip.pszText := TempTextBuffer;
     ZeroMemory(NMTVGetInfoTip.pszText, TempTextBufferSize);
@@ -4520,8 +6048,15 @@ procedure TTreeView.SetToolTipItem(AToolTipItem: TTreeViewItem);
     SendNotify(TVN_GETINFOTIPW, @NMTVGetInfoTip);
     FToolTipTextText := NMTVGetInfoTip.pszText;
     Result := FToolTipTextText <> '';
-    if not Result then Exit;
+  end;
 
+  procedure PrepareInfoTip;
+  var
+    DC: HDC;
+    SaveFont: HFONT;
+    DeltaX, DeltaY: Integer;
+    Point: TPoint;
+  begin
     FToolTipTextRect.Left := FToolTipItem.FLeft;
     FToolTipTextRect.Top := FToolTipItem.FTop + FToolTipItem.FHeight;
     FToolTipTextRect.Right := FToolTipTextRect.Left;
@@ -4613,8 +6148,10 @@ begin
       CreateTooltipWnd;
       if FToolTipWnd <> 0 then
         begin
-          FToolTipInfoTip := InfoTip and PrepareInfoTip;
-          if not FToolTipInfoTip then
+          FToolTipInfoTip := InfoTip and HasInfoTip;
+          if FToolTipInfoTip then
+            PrepareInfoTip
+          else
             if not PrepareToolTip then
               begin
                 HideToolTip;
@@ -4624,18 +6161,19 @@ begin
         end;
     end
   else
-    if InfoTip then
-      begin
-        HideToolTip;
-        CreateTooltipWnd;
-        if FToolTipWnd <> 0 then
-          begin
-            FToolTipInfoTip := PrepareInfoTip;
-            FNeedHoverToolTip := FToolTipInfoTip;
-          end;
-      end
-    else
+    begin
       HideToolTip;
+      if InfoTip and HasInfoTip then
+        begin
+          CreateTooltipWnd;
+          if FToolTipWnd <> 0 then
+            begin
+              PrepareInfoTip;
+              FToolTipInfoTip := True;
+              FNeedHoverToolTip := True;
+            end;
+        end
+    end;
 end;
 
 function TTreeView.ToolTipNotify(ANMHdr: PNMHdr): LRESULT;
@@ -4860,7 +6398,7 @@ begin
   if Count = 0 then Exit;
 
  if RealCode = TVE_EXPAND then AItem.FState := AItem.FState or TVIS_EXPANDED
-                           else AItem.FState := AItem.FState and not TVIS_EXPANDED;
+                          else AItem.FState := AItem.FState and not TVIS_EXPANDED;
 
   if not FDestroying and ANotify then
     SendTreeViewNotify(TVN_ITEMEXPANDED, nil, AItem, ACode);
@@ -4899,6 +6437,9 @@ begin
       if AItem.Expanded then DoAnimation(AItem, nil, MouseItem, amExpand)
                         else DoAnimation(nil, AItem, MouseItem, amCollapse);
     end;
+
+  if AItem.Expanded <> PrevExpanded then
+    NotifyWinEvent(EVENT_OBJECT_STATECHANGE, AItem);
 
   Result := True;
 end;
@@ -4992,6 +6533,9 @@ begin
 
       if Assigned(AItem) then
         begin
+          if Focused then
+            NotifyWinEvent(EVENT_OBJECT_FOCUS, AItem);
+
           OldState := AItem.FState;
           NewState := AItem.FState or TVIS_SELECTED;
           if not (ANotify and SendItemChangeNofify(TVN_ITEMCHANGINGW, AItem, OldState, NewState)) then
@@ -5009,7 +6553,9 @@ begin
           else}
             MakeVisible(AItem);
           InvalidateItem(AItem);
-        end;
+        end
+      else
+        NotifyWinEvent(EVENT_OBJECT_FOCUS, nil);
 
       if not FDestroying and ANotify then
         SendTreeViewNotify(TVN_SELCHANGED, OldFocused, AItem, AAction);
@@ -5119,6 +6665,8 @@ begin
     SetLength(FSelectedItems, FSelectedCount + 4);
   FSelectedItems[FSelectedCount] := AItem;
   Inc(FSelectedCount);
+  NotifyWinEvent(EVENT_OBJECT_STATECHANGE, AItem);
+  NotifyWinEvent(EVENT_OBJECT_SELECTIONADD, AItem);
 end;
 
 procedure TTreeView.RemoveFromSelectedItems(AItem: TTreeViewItem);
@@ -5140,6 +6688,8 @@ begin
             CopyMemory(Dest, Source, CopyCount * ItemSize);
           end;
         Dec(FSelectedCount);
+        NotifyWinEvent(EVENT_OBJECT_STATECHANGE, AItem);
+        NotifyWinEvent(EVENT_OBJECT_SELECTIONREMOVE, AItem);
         Exit;
       end;
 end;
@@ -5234,7 +6784,162 @@ begin
   ScreenToClient(FHandle, Result);
 end;
 
+function TTreeView.DoGetLeftItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+begin
+  Result := AItem.ParentItems.Parent;
+  if Assigned(Result) and ASelect then
+    SelectItem(Result, True, TVC_BYKEYBOARD, False)
+end;
+
+function TTreeView.DoGetUpItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+begin
+  if AItem.Index_ > 0 then
+    Result := AItem.ParentItems.Items[AItem.Index_ - 1]
+  else
+    if ASelect then
+      Result := AItem.ParentItems.Parent
+    else
+      Result := nil;
+  if Assigned(Result) and ASelect then
+    SelectItem(Result, True, TVC_BYKEYBOARD, False)
+end;
+
+function TTreeView.DoGetRightItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+begin
+  if ASelect and not AItem.Expanded then
+    begin
+      ExpandItem(AItem, TVE_EXPAND, TVC_BYKEYBOARD, True);
+      Result := nil;
+      Exit;
+    end
+  else
+    if AItem.Count > 0 then
+      Result := AItem.Items[0]
+    else
+      Result := nil;
+  if Assigned(Result) and ASelect then
+    SelectItem(Result, True, TVC_BYKEYBOARD, False)
+end;
+
+function TTreeView.DoGetDownItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+begin
+  if AItem.Index_ < AItem.ParentItems.Count - 1 then
+    Result := AItem.ParentItems.Items[AItem.Index_ + 1]
+  else
+    if ASelect then
+      Result := AItem.ParentItems.Parent
+    else
+      Result := nil;
+  if Assigned(Result) and ASelect then
+    SelectItem(Result, True, TVC_BYKEYBOARD, False)
+end;
+
+function TTreeView.GetLastChildItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+begin
+  while AItem.Count > 0 do
+    AItem := AItem.Items[AItem.Count - 1];
+  Result := AItem;
+  if ASelect then
+    SelectItem(Result, True, TVC_BYKEYBOARD, False)
+end;
+
+function TTreeView.GetPrevItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+begin
+  Result := DoGetUpItem(AItem, False);
+  if Assigned(Result) then
+    begin
+      Result := GetLastChildItem(Result, ASelect);
+      Exit;
+    end;
+  Result := DoGetLeftItem(AItem, ASelect);
+  {if Assigned(Result) then Exit;}
+end;
+
+function TTreeView.GetNextItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+begin
+  Result := DoGetRightItem(AItem, ASelect);
+  if Assigned(Result) then Exit;
+  Result := DoGetDownItem(AItem, ASelect);
+  if Assigned(Result) then Exit;
+  Result := DoGetLeftItem(AItem, False);
+  if not Assigned(Result) then Exit;
+  Result := DoGetDownItem(Result, ASelect);
+  {if not Assigned(Result) then Exit;}
+end;
+
+function TTreeView.GetLeftItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+begin
+  if VertDirection then
+    Result := DoGetUpItem(AItem, ASelect)
+  else
+    Result := DoGetLeftItem(AItem, ASelect)
+end;
+
+function TTreeView.GetUpItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+begin
+  if VertDirection then
+    if InvertDirection then
+      Result := DoGetRightItem(AItem, ASelect)
+    else
+      Result := DoGetLeftItem(AItem, ASelect)
+  else
+    Result := DoGetUpItem(AItem, ASelect);
+end;
+
+function TTreeView.GetRightItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+begin
+  if VertDirection then
+    Result := DoGetDownItem(AItem, ASelect)
+  else
+    Result := DoGetRightItem(AItem, ASelect)
+end;
+
+function TTreeView.GetDownItem(AItem: TTreeViewItem; ASelect: Boolean): TTreeViewItem;
+begin
+  if VertDirection then
+    if InvertDirection then
+      Result := DoGetLeftItem(AItem, ASelect)
+    else
+      Result := DoGetRightItem(AItem, ASelect)
+  else
+    Result := DoGetDownItem(AItem, ASelect);
+end;
+
 procedure TTreeView.KeyDown(AKeyCode: DWORD; AFlags: DWORD);
+
+  procedure MoveUp;
+  begin
+    if FocusedItem.Index_ > 0 then
+      SelectItem(FocusedItem.ParentItems.Items[FocusedItem.Index_ - 1], True, TVC_BYKEYBOARD, False)
+    else
+      if Assigned(FocusedItem.ParentItems.Parent) then
+        SelectItem(FocusedItem.ParentItems.Parent, True, TVC_BYKEYBOARD, False)
+  end;
+
+  procedure MoveDown;
+  begin
+    if FocusedItem.Index_ < FocusedItem.ParentItems.Count - 1 then
+      SelectItem(FocusedItem.ParentItems.Items[FocusedItem.Index_ + 1], True, TVC_BYKEYBOARD, False)
+    else
+      if Assigned(FocusedItem.ParentItems.Parent) then
+        SelectItem(FocusedItem.ParentItems.Parent, True, TVC_BYKEYBOARD, False)
+  end;
+
+  procedure MoveLeft;
+  begin
+    if Assigned(FocusedItem.ParentItems.Parent) then
+      SelectItem(FocusedItem.ParentItems.Parent, True, TVC_BYKEYBOARD, False)
+  end;
+
+  procedure MoveRight;
+  begin
+    if not FocusedItem.Expanded then
+      ExpandItem(FocusedItem, TVE_EXPAND, TVC_BYKEYBOARD, True)
+    else
+      if FocusedItem.Count > 0 then
+        SelectItem(FocusedItem.Items[0], True, TVC_BYKEYBOARD, False)
+  end;
+
 var
   TVKeyDown: TTVKeyDown;
 begin
@@ -5287,7 +6992,8 @@ begin
             VK_LEFT,
             VK_RIGHT,
             VK_PRIOR,
-            VK_NEXT:
+            VK_NEXT,
+            VK_BACK:
               if not Assigned(FocusedItem) then
                 begin
                   UpdateSelected(TVC_BYKEYBOARD);
@@ -5297,34 +7003,13 @@ begin
 
           case AKeyCode of
             VK_UP, VK_PRIOR:
-              begin
-                if FocusedItem.Index_ > 0 then
-                  SelectItem(FocusedItem.ParentItems.Items[FocusedItem.Index_ - 1], True, TVC_BYKEYBOARD, False)
-                else
-                  if Assigned(FocusedItem.ParentItems.Parent) then
-                    SelectItem(FocusedItem.ParentItems.Parent, True, TVC_BYKEYBOARD, False)
-              end;
+              GetUpItem(FocusedItem, True);
             VK_DOWN, VK_NEXT:
-              begin
-                if FocusedItem.Index_ < FocusedItem.ParentItems.Count - 1 then
-                  SelectItem(FocusedItem.ParentItems.Items[FocusedItem.Index_ + 1], True, TVC_BYKEYBOARD, False)
-                else
-                  if Assigned(FocusedItem.ParentItems.Parent) then
-                    SelectItem(FocusedItem.ParentItems.Parent, True, TVC_BYKEYBOARD, False)
-              end;
+              GetDownItem(FocusedItem, True);
             VK_LEFT, VK_BACK:
-              begin
-                if Assigned(FocusedItem.ParentItems.Parent) then
-                  SelectItem(FocusedItem.ParentItems.Parent, True, TVC_BYKEYBOARD, False)
-              end;
+              GetLeftItem(FocusedItem, True);
             VK_RIGHT:
-              begin
-                if not FocusedItem.Expanded then
-                  ExpandItem(FocusedItem, TVE_EXPAND, TVC_BYKEYBOARD, True)
-                else
-                  if FocusedItem.Count > 0 then
-                    SelectItem(FocusedItem.Items[0], True, TVC_BYKEYBOARD, False)
-              end;
+              GetRightItem(FocusedItem, True);
             VK_SUBTRACT:
               if Assigned(FocusedItem) and FocusedItem.Expanded then
                 ExpandItem(FocusedItem, TVE_COLLAPSE, TVC_BYKEYBOARD, True);
@@ -5335,9 +7020,11 @@ begin
               if Assigned(FocusedItem) then
                 FocusedItem.FullExpand(TVE_EXPAND, TVC_BYKEYBOARD, True);
             VK_HOME:
-              SelectItem(Items[0], True, TVC_BYKEYBOARD, False);
+              if Count > 0 then
+                SelectItem(Items[0], True, TVC_BYKEYBOARD, False);
             VK_END:
-              SelectItem(Items[Count - 1], True, TVC_BYKEYBOARD, False);
+              if Count > 0 then
+                SelectItem(Items[Count - 1], True, TVC_BYKEYBOARD, False);
           end;
         end;
     end;
@@ -6026,6 +7713,144 @@ begin
       NMMouse.dwItemData := AItem.FParam;
     end;
   Result := SendNotify(ACode, @NMMouse) <> 0;
+end;
+
+procedure TTreeView.AddToAccessibleList(AItem: TTreeViewItem);
+var
+  Delta: Integer;
+begin
+  if Length(FAccessibleItems) = FNextAccessibleID then
+    begin
+      if FNextAccessibleID > 64 then
+        Delta := FNextAccessibleID div 4
+      else
+        if FNextAccessibleID > 8 then
+          Delta := 16
+        else
+          Delta := 4;
+      SetLength(FAccessibleItems, FNextAccessibleID + Delta);
+    end;
+  FAccessibleItems[FNextAccessibleID] := AItem;
+  Inc(FNextAccessibleID);
+  AItem.FAccessibleID := FNextAccessibleID;
+end;
+
+procedure TTreeView.RemoveFromAccessibleList(AItem: TTreeViewItem);
+var
+  AccessibleID: Integer;
+begin
+  AccessibleID := AItem.FAccessibleID;
+  FAccessibleItems[AccessibleID - 1] := nil;
+  // Maybe optimize here? We can try to decrease FNextAccessibleID if we remove last item.
+end;
+
+function TTreeView.AccessibleIDToItem(AID: Integer): TTreeViewItem;
+begin
+  Result := FAccessibleItems[AID - 1];
+end;
+
+{
+EVENT_OBJECT_ACCELERATORCHANGE
+EVENT_OBJECT_CLOAKED
+EVENT_OBJECT_CONTENTSCROLLED
+EVENT_OBJECT_CREATE
+EVENT_OBJECT_DEFACTIONCHANGE
+EVENT_OBJECT_DESCRIPTIONCHANGE
+EVENT_OBJECT_DESTROY
+EVENT_OBJECT_DRAGSTART
+EVENT_OBJECT_DRAGCANCEL
+EVENT_OBJECT_DRAGCOMPLETE
+EVENT_OBJECT_DRAGENTER
+EVENT_OBJECT_DRAGLEAVE
+EVENT_OBJECT_DRAGDROPPED
+EVENT_OBJECT_FOCUS
+EVENT_OBJECT_HELPCHANGE
+EVENT_OBJECT_HIDE
+EVENT_OBJECT_HOSTEDOBJECTSINVALIDATED
+EVENT_OBJECT_IME_HIDE
+EVENT_OBJECT_IME_SHOW
+EVENT_OBJECT_IME_CHANGE
+EVENT_OBJECT_INVOKED
+EVENT_OBJECT_LIVEREGIONCHANGED
+EVENT_OBJECT_LOCATIONCHANGE
+EVENT_OBJECT_NAMECHANGE
+EVENT_OBJECT_PARENTCHANGE
+EVENT_OBJECT_REORDER
+EVENT_OBJECT_SELECTION
+EVENT_OBJECT_SELECTIONADD
+EVENT_OBJECT_SELECTIONREMOVE
+EVENT_OBJECT_SELECTIONWITHIN
+EVENT_OBJECT_SHOW
+EVENT_OBJECT_STATECHANGE
+EVENT_OBJECT_TEXTEDIT_CONVERSIONTARGETCHANGED
+EVENT_OBJECT_TEXTSELECTIONCHANGED
+EVENT_OBJECT_UNCLOAKED
+EVENT_OBJECT_VALUECHANGE
+}
+
+procedure TTreeView.NotifyWinEvent(AEvent: DWORD; AItem: TTreeViewItem);
+var
+  EventIndex: Integer;
+begin
+  if FDestroying and (AEvent <> EVENT_OBJECT_DESTROY) then Exit;
+
+  case AEvent of
+    EVENT_OBJECT_DESTROY:
+      for EventIndex := FNotifyEventCount - 1 downto FNotifyEventPosition do
+        with FNotifyEvents[EventIndex] do
+          if Item = AItem then
+            if Event = EVENT_OBJECT_CREATE then
+              begin
+                Event := 0;
+                Exit;
+              end
+            else
+              Event := 0;
+    EVENT_OBJECT_STATECHANGE,
+    EVENT_OBJECT_NAMECHANGE:
+      for EventIndex := FNotifyEventCount - 1 downto FNotifyEventPosition do
+        with FNotifyEvents[EventIndex] do
+          if Item = AItem then
+            if (Event = AEvent) or (Event = EVENT_OBJECT_CREATE) then
+              Exit;
+  end;
+  if AEvent = 0 then Exit;
+
+  if Length(FNotifyEvents) = FNotifyEventCount then
+    SetLength(FNotifyEvents, FNotifyEventCount + 4);
+  with FNotifyEvents[FNotifyEventCount] do
+    begin
+      Event := AEvent;
+      Item := AItem;
+    end;
+  Inc(FNotifyEventCount);
+end;
+
+procedure TTreeView.DoNotifyWinEvents;
+var
+  ChildIndex: DWORD;
+begin
+  if FLockUpdate or (FUpdateCount > 0) then Exit;
+
+  while FNotifyEventPosition < FNotifyEventCount do
+    try
+      with FNotifyEvents[FNotifyEventPosition] do
+        if Event <> 0 then
+          begin
+            if Assigned(Item) then ChildIndex := Item.FAccessibleID
+                              else ChildIndex := CHILDID_SELF;
+            {$WARN BOUNDS_ERROR OFF} // to avoid warning in old Delphis
+            Windows.NotifyWinEvent(Event, FHandle, OBJID_CLIENT, ChildIndex);
+            {$WARN BOUNDS_ERROR ON}
+          end;
+      Inc(FNotifyEventPosition);
+    except
+      {$IFDEF DEBUG}
+      MessageBox(FHandle, 'Exception inside DoNotifyWinEvents', 'Error', MB_ICONERROR);
+      {$ENDIF}
+    end;
+  FNotifyEventPosition := 0;
+  FNotifyEventCount := 0;
 end;
 
 function TTreeView.TempTextBuffer: Pointer;
@@ -6787,11 +8612,18 @@ var
   XOffset, YOffset: Integer;
   PrevHideFocus: Boolean;
   NMHdr: PNMHdr;
+  //Accessible: IAccessible;
 begin
   Inc(FUpdateCount);
   try
     Result := 0;
     case AMsg of
+      {WM_NULL:
+        if AWParam <> 0 then
+          if ALParam <> 0 then
+            Result := LRESULT(GetPrevItem(TTreeViewItem(AWParam), False))
+          else
+            Result := LRESULT(GetNextItem(TTreeViewItem(AWParam), False));}
       WM_NCCREATE:
         begin
           CreateStruct := PCreateStruct(ALParam);
@@ -7011,7 +8843,6 @@ begin
                 UIS_SET:   FHideFocus := True;
                 UIS_CLEAR: FHideFocus := False;
               end;
-              //FHideFocus := SendMessage(FHandle, WM_QUERYUISTATE, 0, 0) <> UISF_HIDEFOCUS;
               if FHideFocus <> PrevHideFocus then
                 if Focused and Assigned(FocusedItem) then
                   InvalidateItem(FocusedItem);
@@ -7051,11 +8882,43 @@ begin
             end;
         end;
 
+      WM_GETOBJECT:
+        case DWORD(ALParam) of
+          {OBJID_CLIENT:
+            begin
+              if not Assigned(FAccessibleHelper) then
+                FAccessibleHelper := TTreeViewAccessibleHelper.Create(Self);
+              Accessible := TTreeViewAccessible.Create(Self, FAccessibleHelper);
+              Result := LresultFromObject(IID_IAccessible, AWParam, Accessible);
+              Accessible := nil;
+            end;}
+          // UiaRootObjectId $FFFFFFE7
+          // OBJID_NATIVEOM 0xFFFFFFF0
+          OBJID_QUERYCLASSNAMEIDX:
+            Result := 65536+25;
+        else
+          Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
+        end;
+      TVM_MAPHTREEITEMTOACCID:
+        begin
+          TreeItem := TTreeViewItem(AWParam);
+          if Assigned(TreeItem) then
+            Result := TreeItem.FAccessibleID;
+        end;
+      TVM_MAPACCIDTOHTREEITEM:
+        Result := LRESULT(AccessibleIDToItem(AWParam));
+
       WM_SETFOCUS:
         begin
           Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
           Focused := True;
           SendNotify(NM_SETFOCUS, nil);
+          if Focused then
+            begin
+              if Assigned(FocusedItem) then TreeItem := FocusedItem
+                                       else TreeItem := nil;
+              NotifyWinEvent(EVENT_OBJECT_FOCUS, TreeItem);
+            end;
         end;
       WM_KILLFOCUS:
         begin
@@ -7311,27 +9174,31 @@ begin
               Result := LRESULT(FindNextSelected(TTreeViewItem(ALParam)));
         end;
       TVM_DELETEITEM:
-        if IsRootItem(ALParam) then
-          begin
-            FFocusedItem := nil;
-            FFixedItem := nil;
-            FScrollItem := nil;
-            FInsertMaskItem := nil;
-            FHotItem := nil;
-            FPressedItem := nil;
-            FDropItem := nil;
-            FSelectedCount := 0;
-            ToolTipItem := nil;
-            if Assigned(FItems) then
-              FItems.DeleteAll;
-            Result := 1;
-          end
-        else
-          begin
-            TreeItem := TTreeViewItem(ALParam);
-            TreeItem.ParentItems.DeleteItem(TreeItem);
-            Result := 1;
-          end;
+        begin
+          if IsRootItem(ALParam) then
+            begin
+              FFocusedItem := nil;
+              FFixedItem := nil;
+              FScrollItem := nil;
+              FInsertMaskItem := nil;
+              FHotItem := nil;
+              FPressedItem := nil;
+              FDropItem := nil;
+              FSelectedCount := 0;
+              ToolTipItem := nil;
+              if Assigned(FItems) then
+                FItems.DeleteAll;
+              Result := 1;
+            end
+          else
+            begin
+              TreeItem := TTreeViewItem(ALParam);
+              TreeItem.ParentItems.DeleteItem(TreeItem);
+              Result := 1;
+            end;
+          if FTotalCount = 0 then
+            FNextAccessibleID := 0;
+        end;
       TVM_SELECTITEM:
         begin
           TreeItem := TTreeViewItem(ALParam);
@@ -7442,7 +9309,13 @@ begin
   finally
     Dec(FUpdateCount);
     DoUpdate;
+    DoNotifyWinEvents;
   end;
+end;
+
+function TTreeView.GetEnabled: Boolean;
+begin
+  Result := FStyle and WS_DISABLED = 0;
 end;
 
 procedure TTreeView.SetFocused(AFocused: Boolean);
@@ -8178,7 +10051,7 @@ begin
   Result := ClassAtom;
   LeaveCriticalSection(LibsCS);
   {$IFDEF DEBUG}
-  if Result = 0 then RaiseLastOSError;
+  //if Result = 0 then RaiseLastOSError;
   {$ENDIF}
 end;
 
@@ -8186,7 +10059,8 @@ procedure DoneTreeViewLib;
 begin
   if ClassAtom <> 0 then
     {$IFDEF DEBUG}
-    if not UnregisterClass(PChar(ClassAtom), HInstance) then RaiseLastOSError;
+    //if not UnregisterClass(PChar(ClassAtom), HInstance) then RaiseLastOSError;
+    UnregisterClass(PChar(ClassAtom), HInstance)
     {$ELSE}
     UnregisterClass(PChar(ClassAtom), HInstance)
     {$ENDIF}

@@ -1,4 +1,5 @@
 unit decTreeViewLibApi;
+
 interface
 
 {$if CompilerVersion > 15}
@@ -91,7 +92,19 @@ const
   TVN_ITEMCLICK       = TVN_FIRST - 105; // Non standard
   TVN_ITEMLMOUSEUP    = TVN_FIRST - 106; // Non standard
 
+const
+  TreeViewClassName: PChar = 'decTreeView';
+
+function InitTreeViewLib: ATOM;
+
 implementation
+
+uses
+  {$IFDEF DLL_TEST_MODE}
+  SysUtils, ComObj;
+  {$ELSE}
+  decTreeViewLib;
+  {$ENDIF}
 
 function TreeView_SetBorder(AWnd: HWND; AFlags, AXBorder, AYBorder: UINT): Integer;
 begin
@@ -162,6 +175,53 @@ function TreeView_GetOptimalSize(AWnd: HWND): TSize;
 begin
   SendMessage(AWnd, TVM_GETOPTIMALSIZE, 0, LPARAM(@Result));
 end;
+
+{$IFDEF DLL_TEST_MODE}
+type
+  TInitTreeViewLib = function: ATOM; stdcall;
+
+var
+  TreeViewLib: HMODULE;
+  InitTreeViewLibProc: TInitTreeViewLib;
+
+function InitTreeViewLib: ATOM;
+var
+  DllName: string;
+  Error: DWORD;
+  P: Integer;
+begin
+  if TreeViewLib = 0 then
+    begin
+      DllName := ExtractFilePath(GetModuleName(HInstance)) +
+        {$IFDEF WIN64}'decTreeViewDll.64.dll'{$ELSE}'decTreeViewDll.32.dll'{$ENDIF};
+      TreeViewLib := LoadLibrary(PChar(DllName));
+      if TreeViewLib = 0 then
+        RaiseLastOSError;
+      @InitTreeViewLibProc := GetProcAddress(TreeViewLib, 'InitTreeViewLib');
+      if not Assigned(InitTreeViewLibProc) then
+        RaiseLastOSError;
+    end;
+  Result := InitTreeViewLibProc;
+end;
+
+procedure DoneTreeViewLib;
+begin
+  if TreeViewLib <> 0 then
+    FreeLibrary(TreeViewLib);
+end;
+{$ELSE}
+function InitTreeViewLib: ATOM;
+begin
+  Result := decTreeViewLib.InitTreeViewLib;
+end;
+{$ENDIF}
+
+initialization
+
+finalization
+  {$IFDEF DLL_TEST_MODE}
+  DoneTreeViewLib;
+  {$ENDIF}
 
 end.
 
