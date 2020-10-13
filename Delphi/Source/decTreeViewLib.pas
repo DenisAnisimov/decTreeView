@@ -2,6 +2,8 @@ unit decTreeViewLib;
 
 {$DEFINE NATIVE_BORDERS}
 
+{$I decShellExtension.inc}
+
 (*
 
 Not supported yet:
@@ -100,7 +102,7 @@ uses
   {$ELSE}
   ActiveX, {$if CompilerVersion > 17}OleAcc,{$ifend} CommCtrl, SysUtils,
   {$ENDIF}
-  decTreeViewLibApi {$IFDEF USE_LOGS}, decShellLogs, decTreeViewLibLogs{$ENDIF};
+  decTreeViewLibApi {$IFDEF USE_LOGS}, decShellLogs, SysUtils, decTreeViewLibLogs{$ENDIF};
 
 {$if CompilerVersion < 23}
 {$I decTreeViewFix.inc}
@@ -120,6 +122,9 @@ const
 
 const
   OBJID_QUERYCLASSNAMEIDX = $FFFFFFF4;
+
+function UiaReturnRawElementProvider(AWnd: HWND; AWParam: WPARAM; ALParam: LPARAM;
+  var AElement: Pointer {IRawElementProviderSimple}): LRESULT; stdcall; external 'Uiautomationcore.dll';
 
 function Min(A, B: Integer): Integer; {$IFDEF SUPPORTS_INLINE}inline;{$ENDIF}
 begin
@@ -2811,6 +2816,8 @@ begin
       end;
 end;
 
+{$UNDEF USE_LOGS}
+
 //**************************************************************************************************
 // TTreeViewItem
 //**************************************************************************************************
@@ -5066,6 +5073,15 @@ var
   X, Y: Integer;
 begin
   if FDestroying then Exit;
+
+  if ABar = SB_VERT then
+    begin
+      if not IsScrollBarVisible(OBJID_VSCROLL) then Exit;
+    end
+  else
+    begin
+      if not IsScrollBarVisible(OBJID_HSCROLL) then Exit;
+    end;
 
   ScrollInfo.fMask := SIF_POS or SIF_PAGE or SIF_RANGE or SIF_TRACKPOS;
   if not GetScrollInfo(ABar, ScrollInfo) then Exit;
@@ -8612,7 +8628,8 @@ var
   XOffset, YOffset: Integer;
   PrevHideFocus: Boolean;
   NMHdr: PNMHdr;
-  //Accessible: IAccessible;
+  Accessible: IAccessible;
+  //Element: Pointer;
 begin
   Inc(FUpdateCount);
   try
@@ -8646,6 +8663,8 @@ begin
             FItems.DeleteAll;
           CloseTheme;
           DeleteFont;
+          //Element := nil;
+          //UiaReturnRawElementProvider(FHandle, 0, 0, Element);
           Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
         end;
       WM_NCDESTROY:;
@@ -8884,18 +8903,18 @@ begin
 
       WM_GETOBJECT:
         case DWORD(ALParam) of
-          {OBJID_CLIENT:
+          OBJID_CLIENT:
             begin
               if not Assigned(FAccessibleHelper) then
                 FAccessibleHelper := TTreeViewAccessibleHelper.Create(Self);
               Accessible := TTreeViewAccessible.Create(Self, FAccessibleHelper);
               Result := LresultFromObject(IID_IAccessible, AWParam, Accessible);
               Accessible := nil;
-            end;}
+            end;
           // UiaRootObjectId $FFFFFFE7
           // OBJID_NATIVEOM 0xFFFFFFF0
-          OBJID_QUERYCLASSNAMEIDX:
-            Result := 65536+25;
+          {OBJID_QUERYCLASSNAMEIDX:
+            Result := 65536+25;}
         else
           Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
         end;
