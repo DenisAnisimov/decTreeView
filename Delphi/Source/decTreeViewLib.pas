@@ -2,8 +2,6 @@ unit decTreeViewLib;
 
 {$DEFINE NATIVE_BORDERS}
 
-{$I decShellExtension.inc}
-
 (*
 
 Not supported yet:
@@ -8903,18 +8901,18 @@ begin
 
       WM_GETOBJECT:
         case DWORD(ALParam) of
-          OBJID_CLIENT:
+          {OBJID_CLIENT:
             begin
               if not Assigned(FAccessibleHelper) then
                 FAccessibleHelper := TTreeViewAccessibleHelper.Create(Self);
               Accessible := TTreeViewAccessible.Create(Self, FAccessibleHelper);
               Result := LresultFromObject(IID_IAccessible, AWParam, Accessible);
               Accessible := nil;
-            end;
+            end;}
           // UiaRootObjectId $FFFFFFE7
           // OBJID_NATIVEOM 0xFFFFFFF0
-          {OBJID_QUERYCLASSNAMEIDX:
-            Result := 65536+25;}
+          OBJID_QUERYCLASSNAMEIDX:
+            Result := 65536 + 25;
         else
           Result := DefWindowProc(FHandle, AMsg, AWParam, ALParam);
         end;
