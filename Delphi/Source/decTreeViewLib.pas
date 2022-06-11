@@ -4859,7 +4859,7 @@ var
   ScrollBarInfo: TScrollBarInfo;
 begin
   ScrollBarInfo.cbSize := SizeOf(ScrollBarInfo);
-  Result := GetScrollBarInfo(FHandle, ABar, ScrollBarInfo);
+  Result := GetScrollBarInfo(FHandle, Longint(ABar), ScrollBarInfo);
   if Result then
     Result := ScrollBarInfo.rgstate[0] and STATE_SYSTEM_INVISIBLE = 0;
 end;
@@ -8719,7 +8719,7 @@ begin
         if AWParam <> 0 then FStyle := FStyle and not WS_DISABLED
                         else FStyle := FStyle or WS_DISABLED;
       TVM_SETEXTENDEDSTYLE:
-        SetStyle2(AWParam, ALParam);
+        SetStyle2(UINT(AWParam), UINT(ALParam));
       TVM_GETEXTENDEDSTYLE:
         Result := FStyle2;
       CCM_SETWINDOWTHEME:
