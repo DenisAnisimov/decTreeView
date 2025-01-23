@@ -7858,9 +7858,9 @@ begin
           end;
       Inc(FNotifyEventPosition);
     except
-      { $IFDEF DEBUG}
+      {$IFDEF DEBUG}
       MessageBox(FHandle, 'Exception inside DoNotifyWinEvents', 'Error', MB_ICONERROR);
-      { $ENDIF}
+      {$ENDIF}
     end;
   FNotifyEventPosition := 0;
   FNotifyEventCount := 0;
