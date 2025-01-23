@@ -1138,6 +1138,7 @@ type
   TNotifyEvent = record
     Event: DWORD;
     Item: TTreeViewItem;
+    ItemAccessibleID: Integer;
   end;
 
   TTreeView = class(TObject)
@@ -7836,13 +7837,13 @@ begin
     begin
       Event := AEvent;
       Item := AItem;
+      if Assigned(Item) then ItemAccessibleID := Item.FAccessibleID
+                        else ItemAccessibleID := CHILDID_SELF;
     end;
   Inc(FNotifyEventCount);
 end;
 
 procedure TTreeView.DoNotifyWinEvents;
-var
-  ChildIndex: DWORD;
 begin
   if FLockUpdate or (FUpdateCount > 0) then Exit;
 
@@ -7851,17 +7852,15 @@ begin
       with FNotifyEvents[FNotifyEventPosition] do
         if Event <> 0 then
           begin
-            if Assigned(Item) then ChildIndex := Item.FAccessibleID
-                              else ChildIndex := CHILDID_SELF;
             {$WARN BOUNDS_ERROR OFF} // to avoid warning in old Delphis
-            Windows.NotifyWinEvent(Event, FHandle, OBJID_CLIENT, ChildIndex);
+            Windows.NotifyWinEvent(Event, FHandle, OBJID_CLIENT, ItemAccessibleID);
             {$WARN BOUNDS_ERROR ON}
           end;
       Inc(FNotifyEventPosition);
     except
-      {$IFDEF DEBUG}
+      { $IFDEF DEBUG}
       MessageBox(FHandle, 'Exception inside DoNotifyWinEvents', 'Error', MB_ICONERROR);
-      {$ENDIF}
+      { $ENDIF}
     end;
   FNotifyEventPosition := 0;
   FNotifyEventCount := 0;
